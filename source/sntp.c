@@ -15,49 +15,62 @@ static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
 
 void *initialise();
-void *httpd (void *arg);
+void *ntp_client(void *arg);
 
-#define PORT 80
+static lwp_t ntp_handle = (lwp_t) NULL;
 
-static	lwp_t httd_handle = (lwp_t)NULL;
+#define NO_RETRIES 20
 
-//---------------------------------------------------------------------------------
 int main(int argc, char **argv) {
-//---------------------------------------------------------------------------------
 	s32 ret;
-
-	char localip[16] = {0};
-	char gateway[16] = {0};
-	char netmask[16] = {0};
+	struct in_addr hostip;
 
 	xfb = initialise();
 
-	printf ("\nlibogc network demo\n");
+	printf ("\nNTP client demo\n");
 	printf("Configuring network ...\n");
 
-	// Configure the network interface
-	ret = if_config ( localip, netmask, gateway, TRUE, 20);
-	if (ret >= 0) {
-		printf ("network configured, ip: %s, gw: %s, mask %s\n", localip, gateway, netmask);
+	net_deinit();
 
-		LWP_CreateThread(	&httd_handle,	/* thread handle */
-							httpd,			/* code */
-							localip,		/* arg pointer for thread */
-							NULL,			/* stack base */
-							16*1024,		/* stack size */
-							50				/* thread priority */ );
-	} else {
-		printf ("network configuration failed!\n");
+	for (int i = 0; i < NO_RETRIES; i++) {
+		ret = net_init();
+		if ((ret == -EAGAIN) || (ret == -ETIMEDOUT)) {
+			usleep(50 * 1000);
+			continue;
+		}
+		break;
+	}
+	if (ret < 0) {
+		printf ("Network configuration failed: %d:%s. Aborting!\n", ret, strerror(ret));
+		exit(0);
 	}
 
-	while(1) {
+	hostip.s_addr = net_gethostip();
+	if (hostip.s_addr == 0) {
+		printf("Failed to get configured ip address. Aborting!\n");
+		exit(0);
+	}
 
+	printf("Network configured, ip: %s\n", inet_ntoa(hostip));
+
+	if (LWP_CreateThread(&ntp_handle,	/* thread handle */
+					 ntp_client,	/* code */
+					 NULL,		    /* arg pointer for thread */
+					 NULL,			/* stack base */
+					 16*1024,		/* stack size */
+					 50				/* thread priority */ ) < 0) {
+		printf("Failed to create ntp clint thread. Aborting!\n");
+		exit(0);
+	}
+
+	while (true) {
 		VIDEO_WaitVSync();
 		WPAD_ScanPads();
 
 		int buttonsDown = WPAD_ButtonsDown(0);
 
 		if (buttonsDown & WPAD_BUTTON_HOME) {
+			printf("Home button pressed. Exiting...\n");
 			exit(0);
 		}
 	}
@@ -65,7 +78,7 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-void *httpd (void *arg) {
+void *ntp_client(void *arg) {
 	int sockfd, n;
 
 	ntp_packet packet;
@@ -86,7 +99,7 @@ void *httpd (void *arg) {
 
 	server = net_gethostbyname(NTP_HOST);
 	if (server == NULL) {
-		printf("Failed to resolve ntp host %s. Aborting!\n", NTP_HOST);
+		printf("Failed to resolve ntp host %s. Errno: %d, %s. Aborting!\n", NTP_HOST, errno, strerror(errno));
 		return NULL;
 	}
 
@@ -95,26 +108,28 @@ void *httpd (void *arg) {
 
 	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
+	printf("Resolved %s to %s\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
+
 	serv_addr.sin_port = htons(NTP_PORT);
 
 	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 	if (n < 0) {
-		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(errno));
+		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
 		return NULL;
 	}
 
 	n = net_write(sockfd, &packet, sizeof(ntp_packet));
 	if (n != sizeof(ntp_packet)) {
-		printf("Failed to write the full ntp packet. Aborting!\n");
+		printf("Failed to write the full ntp packet. Err: %d:%s. Aborting!\n", n, strerror(n));
 		return NULL;
 	}
 
 	n = net_read(sockfd, &packet, sizeof(ntp_packet));
 	if (n < 0) {
 		if (n < 0) {
-			printf("Error while receiving ntp packet. Err: %d:%d:%s. Aborting!\n", n, errno, strerror(errno));
+			printf("Error while receiving ntp packet. Err: %d:%s. Aborting!\n", n, strerror(n));
 		} else {
-			printf("Did not receive full ntp packet. Got %d. Aborting!\n", n);
+			printf("Did not receive full ntp packet. Got %d bytes. Aborting!\n", n);
 		}
 		return NULL;
 	}
@@ -148,7 +163,9 @@ void *initialise() {
 	VIDEO_SetBlack(FALSE);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
-	if(rmode->viTVMode&VI_NON_INTERLACE) VIDEO_WaitVSync();
+	if(rmode->viTVMode&VI_NON_INTERLACE) {
+		VIDEO_WaitVSync();
+	}
 
 	return framebuffer;
 

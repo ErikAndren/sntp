@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <wiiuse/wpad.h>
 
+#include "ntp.h"
+
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
 
@@ -35,7 +37,7 @@ int main(int argc, char **argv) {
 
 	// Configure the network interface
 	ret = if_config ( localip, netmask, gateway, TRUE, 20);
-	if (ret>=0) {
+	if (ret >= 0) {
 		printf ("network configured, ip: %s, gw: %s, mask %s\n", localip, gateway, netmask);
 
 		LWP_CreateThread(	&httd_handle,	/* thread handle */
@@ -63,85 +65,68 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-const static char http_200[] = "HTTP/1.1 200 OK\r\n";
-
-const static char indexdata[] = "<html> \
-                               <head><title>A test page</title></head> \
-                               <body> \
-                               This small test page has had %d hits. \
-                               </body> \
-                               </html>";
-
-const static char http_html_hdr[] = "Content-type: text/html\r\n\r\n";
-const static char http_get_index[] = "GET / HTTP/1.1\r\n";
-
-//---------------------------------------------------------------------------------
 void *httpd (void *arg) {
-//---------------------------------------------------------------------------------
+	int sockfd, n;
 
-	int sock, csock;
-	int ret;
-	u32	clientlen;
-	struct sockaddr_in client;
-	struct sockaddr_in server;
-	char temp[1026];
-	static int hits=0;
+	ntp_packet packet;
 
-	clientlen = sizeof(client);
+	struct sockaddr_in serv_addr;
+	struct hostent *server;
 
-	sock = net_socket (AF_INET, SOCK_STREAM, IPPROTO_IP);
+	memset(&packet, 0, sizeof(ntp_packet));
 
-	if (sock == INVALID_SOCKET) {
-      printf ("Cannot create a socket!\n");
-    } else {
+	// Set the first byte's bits to 00,011,011 for li = 0, vn = 3, and mode = 3
+	*((char *) &packet + 0) = 0b00011011;
 
-		memset (&server, 0, sizeof (server));
-		memset (&client, 0, sizeof (client));
-
-		server.sin_family = AF_INET;
-		server.sin_port = htons (PORT);
-		server.sin_addr.s_addr = INADDR_ANY;
-		ret = net_bind (sock, (struct sockaddr *) &server, sizeof (server));
-
-		if (ret) {
-			printf("Error %d binding socket!\n", ret);
-
-		} else {
-			printf("Starting http server on port %d\n", PORT);
-			if ((ret = net_listen(sock, 5))) {
-
-				printf("Error %d listening!\n", ret);
-
-			} else {
-
-				while(1) {
-
-					csock = net_accept (sock, (struct sockaddr *) &client, &clientlen);
-
-					if ( csock < 0 ) {
-						printf("Error connecting socket %d!\n", csock);
-						while(1);
-					}
-
-					printf("Connecting port %d from %s\n", client.sin_port, inet_ntoa(client.sin_addr));
-					memset (temp, 0, 1026);
-					ret = net_recv (csock, temp, 1024, 0);
-					printf("Received %d bytes\n", ret);
-
-					if ( !strncmp( temp, http_get_index, strlen(http_get_index) ) ) {
-						hits++;
-						net_send(csock, http_200, strlen(http_200), 0);
-						net_send(csock, http_html_hdr, strlen(http_html_hdr), 0);
-						sprintf(temp, indexdata, hits);
-						net_send(csock, temp, strlen(temp), 0);
-					}
-
-					net_close (csock);
-
-				}
-			}
-		}
+	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sockfd == INVALID_SOCKET) {
+		printf("Failed to create socket. Aborting!\n");
+		return NULL;
 	}
+
+	server = net_gethostbyname(NTP_HOST);
+	if (server == NULL) {
+		printf("Failed to resolve ntp host %s. Aborting!\n", NTP_HOST);
+		return NULL;
+	}
+
+	memset(&serv_addr, 0, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+
+	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+
+	serv_addr.sin_port = htons(NTP_PORT);
+
+	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
+	if (n < 0) {
+		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(errno));
+		return NULL;
+	}
+
+	n = net_write(sockfd, &packet, sizeof(ntp_packet));
+	if (n != sizeof(ntp_packet)) {
+		printf("Failed to write the full ntp packet. Aborting!\n");
+		return NULL;
+	}
+
+	n = net_read(sockfd, &packet, sizeof(ntp_packet));
+	if (n < 0) {
+		if (n < 0) {
+			printf("Error while receiving ntp packet. Err: %d:%d:%s. Aborting!\n", n, errno, strerror(errno));
+		} else {
+			printf("Did not receive full ntp packet. Got %d. Aborting!\n", n);
+		}
+		return NULL;
+	}
+
+	/* Swap seconds and fractions to host byte order */
+	packet.txTm_s = ntohl(packet.txTm_s);
+	packet.txTm_f = ntohl(packet.txTm_f);
+
+	time_t txTm = (time_t) (packet.txTm_s - NTP_TIMESTAMP_DELTA);
+
+	printf("Time: %s", ctime(&txTm));
+
 	return NULL;
 }
 

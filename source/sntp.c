@@ -33,6 +33,7 @@ int main(int argc, char **argv) {
 	net_deinit();
 
 	for (int i = 0; i < NO_RETRIES; i++) {
+		printf("\rTry: %d", i);
 		ret = net_init();
 		if ((ret == -EAGAIN) || (ret == -ETIMEDOUT)) {
 			usleep(50 * 1000);
@@ -40,6 +41,8 @@ int main(int argc, char **argv) {
 		}
 		break;
 	}
+	printf("\n");
+
 	if (ret < 0) {
 		printf ("Network configuration failed: %d:%s. Aborting!\n", ret, strerror(ret));
 		exit(0);
@@ -80,9 +83,7 @@ int main(int argc, char **argv) {
 
 void *ntp_client(void *arg) {
 	int sockfd, n;
-
 	ntp_packet packet;
-
 	struct sockaddr_in serv_addr;
 	struct hostent *server;
 
@@ -91,9 +92,11 @@ void *ntp_client(void *arg) {
 	// Set the first byte's bits to 00,011,011 for li = 0, vn = 3, and mode = 3
 	*((char *) &packet + 0) = 0b00011011;
 
-	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sockfd == INVALID_SOCKET) {
-		printf("Failed to create socket. Aborting!\n");
+	// Cannot use IPPROTO_UDP, this will return error 121
+	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+
+	if (sockfd < 0) {
+		printf("Failed to create socket %d:%s. Aborting!\n", sockfd, strerror(sockfd));
 		return NULL;
 	}
 
@@ -112,9 +115,17 @@ void *ntp_client(void *arg) {
 
 	serv_addr.sin_port = htons(NTP_PORT);
 
-	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
+	for (int i = 0; i < 50; i++) {
+		n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
+		if (n < 0) {
+			printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
+			usleep(50 * 1000);
+		} else {
+			break;
+		}
+	}
 	if (n < 0) {
-		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
+		printf("Giving up\n");
 		return NULL;
 	}
 

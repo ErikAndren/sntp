@@ -5,7 +5,13 @@
 
 #include <unistd.h>
 
-#define NTP_TIMESTAMP_DELTA 2208988800ull
+// NTP Epoch 1900-01-01 00:00
+// Unix Epoch 1970-01-01 00:00
+// Gamecube Epoch 2000-01-01 00:00
+#define NTP_TO_UNIX_EPOCH_DELTA 2208988800ull
+#define UNIX_EPOCH_TO_GC_EPOCH_DELTA 946684800ull
+#define NTP_TO_GC_EPOCH_DELTA (NTP_TO_UNIX_EPOCH_DELTA + UNIX_EPOCH_TO_GC_EPOCH_DELTA)
+
 
 #define LI(packet)   (uint8_t) ((packet.li_vn_mode & 0xC0) >> 6) // (li   & 11 000 000) >> 6
 #define VN(packet)   (uint8_t) ((packet.li_vn_mode & 0x38) >> 3) // (vn   & 00 111 000) >> 3

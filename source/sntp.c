@@ -8,6 +8,7 @@
 #include <wiiuse/wpad.h>
 
 #include "ntp.h"
+#include "ogc/conf.h"
 
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
@@ -16,6 +17,8 @@ void *initialise();
 void *ntp_client(void *arg);
 
 static lwp_t ntp_handle = (lwp_t) NULL;
+
+extern u32 __SYS_GetRTC(u32 *gctime);
 
 #define NO_RETRIES 20
 
@@ -26,11 +29,20 @@ int main(int argc, char **argv) {
 	xfb = initialise();
 
 	printf ("\nNTP client demo\n");
-	printf("Configuring network ...\n");
+	printf("Configuring network. Continously press home key to abort\n");
 
 	net_deinit();
 
 	for (int i = 0; i < NO_RETRIES; i++) {
+		WPAD_ScanPads();
+
+		int buttonsDown = WPAD_ButtonsDown(0);
+
+		if (buttonsDown & WPAD_BUTTON_HOME) {
+			printf("Home button pressed. Exiting...\n");
+			exit(0);
+		}
+
 		printf("\rTry: %d", i);
 		ret = net_init();
 		if ((ret == -EAGAIN) || (ret == -ETIMEDOUT)) {
@@ -84,6 +96,10 @@ void *ntp_client(void *arg) {
 	ntp_packet packet;
 	struct sockaddr_in serv_addr;
 	struct hostent *server;
+	uint32_t rtc_s;
+	uint64_t local_time;
+	uint64_t ntp_time_in_gc_epoch;
+	u32 bias;
 
 	memset(&packet, 0, sizeof(ntp_packet));
 
@@ -143,13 +159,24 @@ void *ntp_client(void *arg) {
 		return NULL;
 	}
 
-	/* Swap seconds and fractions to host byte order */
+	/* Swap seconds to host byte order */
 	packet.txTm_s = ntohl(packet.txTm_s);
-	packet.txTm_f = ntohl(packet.txTm_f);
 
-	time_t txTm = (time_t) (packet.txTm_s - NTP_TIMESTAMP_DELTA);
+	n = __SYS_GetRTC(&rtc_s);
 
+	time_t txTm = (time_t) (packet.txTm_s - NTP_TO_UNIX_EPOCH_DELTA);
 	printf("Time: %s", ctime(&txTm));
+
+	ntp_time_in_gc_epoch = packet.txTm_s - NTP_TO_GC_EPOCH_DELTA;
+
+	n = CONF_GetCounterBias(&bias);
+	if (n != 0) {
+		printf("Failed to get counter bias, %d\n", n);
+		return NULL;
+	}
+
+	local_time = rtc_s + bias;
+	printf("ntp time: %llu, local time: %llu, diff: %lld\n", ntp_time_in_gc_epoch, local_time, ntp_time_in_gc_epoch - local_time);
 
 	return NULL;
 }

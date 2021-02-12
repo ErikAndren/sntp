@@ -2,11 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
-#include <ogcsys.h>
-#include <gccore.h>
 #include <network.h>
-#include <debug.h>
 #include <errno.h>
+
 #include <wiiuse/wpad.h>
 
 #include "ntp.h"

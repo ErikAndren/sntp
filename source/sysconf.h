@@ -38,12 +38,12 @@ distribution.
 
 #define SYSCONF_EBADFILE	-0x6001
 #define SYSCONF_ENOENT		-0x6002
-#define SYSCONF_ETOOBIG	-0x6003
+#define SYSCONF_ETOOBIG	    -0x6003
 #define SYSCONF_ENOTINIT	-0x6004
 #define SYSCONF_ENOTIMPL	-0x6005
 #define SYSCONF_EBADVALUE	-0x6006
 #define SYSCONF_ENOMEM		-0x6007
-#define SYSCONF_EPERMS	-0x6008
+#define SYSCONF_EPERMS	    -0x6008
 #define SYSCONF_EBADWRITE	-0x6009
 #define SYSCONF_ERR_OK		0
 
@@ -170,11 +170,9 @@ s32 SYSCONF_GetRegion(void);
 s32 SYSCONF_GetArea(void);
 s32 SYSCONF_GetVideo(void);
 
-
 /* Set functions */
 s32 SYSCONF_SaveChanges(void);
 s32 SYSCONF_Set(const char *name, const void *value, u32 length);
-
 
 s32 SYSCONF_SetShutdownMode(u8 value);
 s32 SYSCONF_SetIdleLedMode(u8 value);
@@ -201,7 +199,6 @@ s32 SYSCONF_SetWiiConnect24(u32 value);
 s32 SYSCONF_SetRegion(s32 value);
 s32 SYSCONF_SetArea(s32 value);
 s32 SYSCONF_SetVideo(s32 value);
-
 
 #ifdef __cplusplus
    }

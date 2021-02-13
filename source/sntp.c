@@ -180,13 +180,22 @@ void *ntp_client(void *arg) {
 		printf("%s:%d. Failed to get counter bias. Err: %d. Aborting!\n", __FILE__, __LINE__, n);
 		return NULL;
 	}
+	printf("Counter bias is %u\n", bias);
 
 	local_time = rtc_s + bias;
 	printf("ntp time: %llu, local time: %llu, diff: %lld\n", ntp_time_in_gc_epoch, local_time, ntp_time_in_gc_epoch - local_time);
 
-	printf("Decreasing counter bias by one hour (3600 s)\n");
-
-	n = SYSCONF_SetCounterBias(bias - 3600);
+	if (ntp_time_in_gc_epoch > local_time) {
+		// Need to increase counter bias to sync with ntp time
+		printf("Increasing bias by %llu\n", ntp_time_in_gc_epoch - local_time);
+		bias += (ntp_time_in_gc_epoch - local_time);
+	} else {
+		printf("Decreasing bias by %llu\n", local_time - ntp_time_in_gc_epoch);
+		// Need to decrease counter bias to sync with ntp_time
+		bias -= (local_time - ntp_time_in_gc_epoch);
+	}
+	printf("Adjusting bias to %u\n", bias);
+	n = SYSCONF_SetCounterBias(bias);
 	if (n < 0) {
 		printf("Failed to reset counter bias. Err: %d. Aborting!\n", n);
 		return NULL;
@@ -201,6 +210,7 @@ void *ntp_client(void *arg) {
 
 	local_time = rtc_s + bias;
 	printf("ntp time: %llu, local time: %llu, diff: %lld\n", ntp_time_in_gc_epoch, local_time, ntp_time_in_gc_epoch - local_time);
+
 
 	return NULL;
 }

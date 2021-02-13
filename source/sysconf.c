@@ -33,17 +33,17 @@ distribution.
 #include <stdio.h>
 #include <string.h>
 #include <malloc.h>
+#include <stdlib.h>
+
 #include <ogc/ipc.h>
 #include <ogc/isfs.h>
 #include <ogc/es.h>
 
+#include <wiiuse/wpad.h>
+
 #include "sysconf.h"
 
-#define DEBUG_SYSCONF
-
-#ifdef DEBUG_SYSCONF
-#include "wiibasics.h"
-#endif
+//#define DEBUG_SYSCONF
 
 static int __sysconf_inited = 0;
 static int __sysconf_buffer_txt_decrypted = 0;
@@ -53,17 +53,65 @@ static int __sysconf_buffer_updated = 0;
 static int __sysconf_txt_buffer_updated = 0;
 
 static const char __sysconf_file[] ATTRIBUTE_ALIGN(32) = "/shared2/sys/SYSCONF";
-//static const char __sysconf_txt_file[] ATTRIBUTE_ALIGN(32) = "/title/00000001/00000002/data/setting.txt";
 static const char __sysconf_txt_file[] ATTRIBUTE_ALIGN(32) = "/title/00000001/00000002/data/setting.txt";
 
-int __SYSCONF_EndOfTextOffset(void){
+#ifdef DEBUG_SYSCONF
+static char charASCII(u8 c)
+{
+    if (c < 0x20 || c > 0x7E) {
+		return '.';
+	}
+	return (char) c;
+}
+
+static void hex_print_array16(const u8 *array, u32 size)
+{
+    u32 offset = 0;
+    u32 page_size = 0x100;
+    char line[17];
+    line[16] = 0;
+    if (size > page_size) printf("Seite 1 von %u", (size / page_size)+1);
+
+    while (offset < size)
+	{
+        if (!(offset % 16)) printf("\n0x%08X: ", offset);
+
+        printf("%02X", array[offset]);
+
+        line[offset % 16] = charASCII(array[offset]);
+
+        if (!(++offset % 2)) printf(" ");
+
+        if (!(offset % 16)) printf(line);
+
+        if (!(offset % page_size) && offset < size)
+		{
+			while (true) {
+				int buttonsDown = WPAD_ButtonsDown(0);
+				if (buttonsDown & WPAD_BUTTON_HOME) {
+					exit(0);
+				}
+				if (buttonsDown & WPAD_BUTTON_A) {
+					break;
+				}
+				if (buttonsDown & WPAD_BUTTON_B) {
+					return;
+				}
+
+			}
+        }
+    }
+}
+#endif
+
+int __SYSCONF_EndOfTextOffset(void) {
 	int i;
 	int offset = 0;
-	
+
 	for (i = 0; i < 0x100; i++)
 		if (!memcmp(__sysconf_txt_buffer+i, "\r\n", 2))
 			offset = i;
-		
+
 	offset += 2;
 	return offset;
 }
@@ -73,23 +121,23 @@ void __SYSCONF_DecryptEncryptTextBuffer(void)
 	u32 key = 0x73B5DBFA;
 	int i;
 	char *end = (char*)__sysconf_txt_buffer;
-	
+
 	if (__sysconf_buffer_txt_decrypted)
 		end += __SYSCONF_EndOfTextOffset();
-	
+
 	for(i=0; i<0x100; i++) {
 		__sysconf_txt_buffer[i] ^= key & 0xff;
 		key = (key<<1) | (key>>31);
 	}
-	
+
 	__sysconf_buffer_txt_decrypted = !__sysconf_buffer_txt_decrypted;
-	
+
 	if (__sysconf_buffer_txt_decrypted)
 		end += __SYSCONF_EndOfTextOffset();
-	
-	
+
+
 	memset(end, 0, (__sysconf_txt_buffer+0x100)-end);
-	
+
 }
 
 #ifdef DEBUG_SYSCONF
@@ -113,7 +161,6 @@ void SYSCONF_DumpEncryptedTxtBuffer(void){
 	if (was)
 		__SYSCONF_DecryptEncryptTextBuffer();
 }
-
 
 void SYSCONF_PrintAllSettings(void){
 	if(!__sysconf_inited) return;
@@ -149,11 +196,11 @@ void SYSCONF_PrintAllSettings(void){
 			break;
 			default:
 				sprintf(typestring, "Unknown %u", __sysconf_buffer[*offset] >> 5);
-		}			
+		}
 		printf("%3u. 0x%04X: %-10s Type: %s\n", i+1, *offset, temp, typestring);
 		offset++;
 	}
-	
+
 }
 #endif /* DEBUG_SYSCONF */
 
@@ -161,30 +208,30 @@ s32 SYSCONF_Init(void)
 {
 	int fd;
 	int ret;
-	
+
 	if(__sysconf_inited) return 0;
-	
+
 	fd = IOS_Open(__sysconf_file,1);
 	if(fd < 0) return fd;
-	
+
 	memset(__sysconf_buffer,0,0x4000);
 	memset(__sysconf_txt_buffer,0,0x101);
-	
+
 	ret = IOS_Read(fd, __sysconf_buffer, 0x4000);
 	IOS_Close(fd);
 	if(ret != 0x4000) return SYSCONF_EBADFILE;
-	
+
 	fd = IOS_Open(__sysconf_txt_file,1);
 	if(fd < 0) return fd;
-	
+
 	ret = IOS_Read(fd, __sysconf_txt_buffer, 0x100);
 	IOS_Close(fd);
 	if(ret != 0x100) return SYSCONF_EBADFILE;
-	
+
 	if(memcmp(__sysconf_buffer, "SCv0", 4)) return SYSCONF_EBADFILE;
-	
+
 	__SYSCONF_DecryptEncryptTextBuffer();
-	
+
 	__sysconf_inited = 1;
 	return 0;
 }
@@ -193,54 +240,53 @@ int __SYSCONF_WriteTxtBuffer(void)
 {
 	u64 tid;
 	int ret, fd;
-	
+
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-	
+
 	if (!__sysconf_txt_buffer_updated) return 0;
-		
+
 	ret = ES_GetTitleID(&tid);
 	if (ret < 0) return ret;
-	
+
 	if (tid != 0x100000002LL) return SYSCONF_EPERMS;
-	
+
 	if (__sysconf_buffer_txt_decrypted)
 		__SYSCONF_DecryptEncryptTextBuffer();
-	
+
 	ret = ISFS_SetAttr(__sysconf_txt_file, 0x1000, 1, 0, 3, 3, 3);
 	if (ret < 0) return ret;
-	
+
 	fd = IOS_Open(__sysconf_txt_file, 2);
 	if(fd < 0) return fd;
-		
+
 	ret = IOS_Write(fd, __sysconf_txt_buffer, 0x100);
 	IOS_Close(fd);
 	if(ret != 0x100) return SYSCONF_EBADWRITE;
-		
+
 	ret = ISFS_SetAttr(__sysconf_txt_file, 0x1000, 1, 0, 1, 1, 1);
 	if (ret < 0) return ret;
-		
+
 	__sysconf_buffer_updated = 0;
-		
+
 	return 0;
-	
 }
 
 int __SYSCONF_WriteBuffer(void)
 {
 	int ret, fd;
-	
+
 	if (!__sysconf_inited) return SYSCONF_ENOTINIT;
-		
+
 	if (!__sysconf_buffer_updated) return 0;
-		
+
 	fd = IOS_Open(__sysconf_file,2);
 	if(fd < 0) return fd;
-	
-	
+
+
 	ret = IOS_Write(fd, __sysconf_buffer, 0x4000);
 	IOS_Close(fd);
 	if(ret != 0x4000) return SYSCONF_EBADFILE;
-	
+
 	__sysconf_buffer_updated = 0;
 	return 0;
 }
@@ -252,11 +298,11 @@ s32 SYSCONF_SaveChanges(void)
 	ret = __SYSCONF_WriteBuffer();
 	if (ret < 0)
 		return ret;
-	
+
 	ret = __SYSCONF_WriteTxtBuffer();
 	if (ret < 0)
 		return ret;
-	
+
 	return SYSCONF_ERR_OK;
 }
 
@@ -264,22 +310,22 @@ int __SYSCONF_ShiftTxt(char *start, s32 delta)
 {
 	char *end;
 	char temp[0x100];
-	
+
 	if (!__sysconf_buffer_txt_decrypted)
 		__SYSCONF_DecryptEncryptTextBuffer();
-	
+
 	end = strchr((char*)__sysconf_txt_buffer, 0);
 	if (end == NULL || end > __sysconf_txt_buffer+0x100) return SYSCONF_EBADFILE;
-		
+
 	if (start < __sysconf_txt_buffer || start >= end)
 		return SYSCONF_EBADVALUE;
-	
+
 	memcpy(temp, start, end-start);
 	memcpy(start+delta, temp, end-start);
 	//free (temp);
 	*(end+delta) = 0;
 	return 0;
-	
+
 }
 
 int __SYSCONF_GetTxt(const char *name, char *buf, int length)
@@ -288,12 +334,12 @@ int __SYSCONF_GetTxt(const char *name, char *buf, int length)
 	char *delim, *end;
 	int slen;
 	int nlen = strlen(name);
-	
+
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-		
+
 	if (!__sysconf_buffer_txt_decrypted)
 		__SYSCONF_DecryptEncryptTextBuffer();
-	
+
 	while(line < (__sysconf_txt_buffer+0x100) ) {
 		delim = strchr(line, '=');
 		if(delim && ((delim - line) == nlen) && !memcmp(name, line, nlen)) {
@@ -311,7 +357,7 @@ int __SYSCONF_GetTxt(const char *name, char *buf, int length)
 				}
 			}
 		}
-		
+
 		// skip to line end
 		while(line < (__sysconf_txt_buffer+0x100) && *line++ != '\n');
 	}
@@ -325,23 +371,23 @@ int __SYSCONF_AddTxt(const char *name, const char *value)
 	char *temp;
 	char endline[10];
 	u32 length;
-	
+
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-		
+
 	newline = strchr((char*)__sysconf_txt_buffer, 0);
 	if (newline == NULL || newline > __sysconf_txt_buffer+0x100) return SYSCONF_EBADFILE;
-		
-	
+
+
 	newline--;
 	while (*--newline == '\r');
 	newline++;
-	
+
 	strcpy(endline, newline);
-	
+
 	newline += strlen(endline);
-	
+
 	length = strlen(name)+strlen(value)+strlen(endline)+1;
-	
+
 	if (newline+length < __sysconf_txt_buffer+0x100){
 		temp = malloc(length+1);
 		sprintf(temp, "%s=%s%s", name, value, endline);
@@ -350,7 +396,7 @@ int __SYSCONF_AddTxt(const char *name, const char *value)
 		printf("Not worth it!");
 		return SYSCONF_EBADFILE;
 	}
-	
+
 	return 0;
 }
 
@@ -361,12 +407,12 @@ int __SYSCONF_SetTxt(const char *name, const char *value)
 	int slen;
 	int nlen = strlen(name);
 	int vlen = strlen(value);
-	
+
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-		
+
 	if (!__sysconf_buffer_txt_decrypted)
 		__SYSCONF_DecryptEncryptTextBuffer();
-	
+
 	while(line < (__sysconf_txt_buffer+0x100) ) {
 		delim = strchr(line, '=');
 		if(delim && ((delim - line) == nlen) && !memcmp(name, line, nlen)) {
@@ -379,7 +425,7 @@ int __SYSCONF_SetTxt(const char *name, const char *value)
 					memcpy(delim, value, vlen);
 					__sysconf_txt_buffer_updated = 1;
 					return 0;
-				} else if(vlen && (vlen < slen || 
+				} else if(vlen && (vlen < slen ||
 					(strchr(end, '\n') + (vlen-slen)) < __sysconf_txt_buffer+0x100)){
 					//printf("vlen: %u slen: %u\n", vlen, slen);
 					if (__SYSCONF_ShiftTxt(end, vlen-slen)) return -1;
@@ -391,15 +437,13 @@ int __SYSCONF_SetTxt(const char *name, const char *value)
 				}
 			}
 		}
-		
+
 		// skip to line end
 		while(line < (__sysconf_txt_buffer+0x100) && *line++ != '\n');
 	}
-	
+
 	return SYSCONF_ENOENT;
 }
-
-
 
 u8 *__SYSCONF_Find(const char *name)
 {
@@ -408,7 +452,7 @@ u8 *__SYSCONF_Find(const char *name)
 	int nlen = strlen(name);
 	count = *((u16*)(&__sysconf_buffer[4]));
 	offset = (u16*)&__sysconf_buffer[6];
-	
+
 	while(count--) {
 		if((nlen == ((__sysconf_buffer[*offset]&0x0F)+1)) && !memcmp(name, &__sysconf_buffer[*offset+1], nlen))
 			return &__sysconf_buffer[*offset];
@@ -422,10 +466,10 @@ s32 SYSCONF_GetLength(const char *name)
 	u8 *entry;
 
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-	
+
 	entry = __SYSCONF_Find(name);
 	if(!entry) return SYSCONF_ENOENT;
-	
+
 	switch(*entry>>5) {
 		case 1:
 			return *((u16*)&entry[strlen(name)+1]) + 1;
@@ -440,18 +484,18 @@ s32 SYSCONF_GetLength(const char *name)
 		case 7:
 			return 1;
 		default:
-			return SYSCONF_ENOTIMPL;	
+			return SYSCONF_ENOTIMPL;
 	}
 }
 
-int SYSCONF_GetType(const char *name) 
+int SYSCONF_GetType(const char *name)
 {
 	u8 *entry;
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-	
+
 	entry = __SYSCONF_Find(name);
 	if(!entry) return SYSCONF_ENOENT;
-	
+
 	return *entry>>5;
 }
 
@@ -460,14 +504,14 @@ s32 SYSCONF_Get(const char *name, void *buffer, u32 length)
 	u8 *entry;
 	s32 len;
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-	
+
 	entry = __SYSCONF_Find(name);
 	if(!entry) return SYSCONF_ENOENT;
-	
+
 	len = SYSCONF_GetLength(name);
 	if(len<0) return len;
 	if(len>length) return SYSCONF_ETOOBIG;
-	
+
 	switch(*entry>>5) {
 		case SYSCONF_BIGARRAY:
 			memcpy(buffer, &entry[strlen(name)+3], len);
@@ -493,14 +537,14 @@ s32 SYSCONF_Set(const char *name, const void *value, u32 length)
 	u8 *entry;
 	s32 len;
 	if(!__sysconf_inited) return SYSCONF_ENOTINIT;
-	
+
 	entry = __SYSCONF_Find(name);
 	if(!entry) return SYSCONF_ENOENT;
-	
+
 	len = SYSCONF_GetLength(name);
 	if(len<0) return len;
 	if(length!=len) return SYSCONF_EBADVALUE;
-	
+
 	switch(*entry>>5) {
 		case SYSCONF_BIGARRAY:
 			memcpy(&entry[strlen(name)+3], value, len);
@@ -522,18 +566,18 @@ s32 SYSCONF_Set(const char *name, const void *value, u32 length)
 	return 0;
 }
 
-s32 SYSCONF_GetShutdownMode(void) 
+s32 SYSCONF_GetShutdownMode(void)
 {
 	u8 idlesysconf[2] = {0,0};
 	int res;
-	
+
 	res = SYSCONF_Get("IPL.IDL", idlesysconf, 2);
 	if(res<0) return res;
 	if(res!=2) return SYSCONF_EBADVALUE;
 	return idlesysconf[0];
 }
 
-s32 SYSCONF_GetIdleLedMode(void) 
+s32 SYSCONF_GetIdleLedMode(void)
 {
 	int res;
 	u8 idlesysconf[2] = {0,0};
@@ -543,7 +587,7 @@ s32 SYSCONF_GetIdleLedMode(void)
 	return idlesysconf[1];
 }
 
-s32 SYSCONF_GetProgressiveScan(void) 
+s32 SYSCONF_GetProgressiveScan(void)
 {
 	int res;
 	u8 val = 0;
@@ -553,7 +597,7 @@ s32 SYSCONF_GetProgressiveScan(void)
 	return val;
 }
 
-s32 SYSCONF_GetEuRGB60(void) 
+s32 SYSCONF_GetEuRGB60(void)
 {
 	int res;
 	u8 val = 0;
@@ -563,7 +607,7 @@ s32 SYSCONF_GetEuRGB60(void)
 	return val;
 }
 
-s32 SYSCONF_GetIRSensitivity(void) 
+s32 SYSCONF_GetIRSensitivity(void)
 {
 	int res;
 	u32 val = 0;
@@ -573,7 +617,7 @@ s32 SYSCONF_GetIRSensitivity(void)
 	return val;
 }
 
-s32 SYSCONF_GetSensorBarPosition(void) 
+s32 SYSCONF_GetSensorBarPosition(void)
 {
 	int res;
 	u8 val = 0;
@@ -583,7 +627,7 @@ s32 SYSCONF_GetSensorBarPosition(void)
 	return val;
 }
 
-s32 SYSCONF_GetPadSpeakerVolume(void) 
+s32 SYSCONF_GetPadSpeakerVolume(void)
 {
 	int res;
 	u8 val = 0;
@@ -593,7 +637,7 @@ s32 SYSCONF_GetPadSpeakerVolume(void)
 	return val;
 }
 
-s32 SYSCONF_GetPadMotorMode(void) 
+s32 SYSCONF_GetPadMotorMode(void)
 {
 	int res;
 	u8 val = 0;
@@ -603,7 +647,7 @@ s32 SYSCONF_GetPadMotorMode(void)
 	return val;
 }
 
-s32 SYSCONF_GetSoundMode(void) 
+s32 SYSCONF_GetSoundMode(void)
 {
 	int res;
 	u8 val = 0;
@@ -613,7 +657,7 @@ s32 SYSCONF_GetSoundMode(void)
 	return val;
 }
 
-s32 SYSCONF_GetLanguage(void) 
+s32 SYSCONF_GetLanguage(void)
 {
 	int res;
 	u8 val = 0;
@@ -623,7 +667,7 @@ s32 SYSCONF_GetLanguage(void)
 	return val;
 }
 
-s32 SYSCONF_GetCounterBias(u32 *bias) 
+s32 SYSCONF_GetCounterBias(u32 *bias)
 {
 	int res;
 	res = SYSCONF_Get("IPL.CB", bias, 4);
@@ -632,7 +676,7 @@ s32 SYSCONF_GetCounterBias(u32 *bias)
 	return SYSCONF_ERR_OK;
 }
 
-s32 SYSCONF_GetScreenSaverMode(void) 
+s32 SYSCONF_GetScreenSaverMode(void)
 {
 	int res;
 	u8 val = 0;
@@ -642,7 +686,7 @@ s32 SYSCONF_GetScreenSaverMode(void)
 	return val;
 }
 
-s32 SYSCONF_GetDisplayOffsetH(s8 *offset) 
+s32 SYSCONF_GetDisplayOffsetH(s8 *offset)
 {
 	int res;
 	res = SYSCONF_Get("IPL.DH", offset, 1);
@@ -651,11 +695,11 @@ s32 SYSCONF_GetDisplayOffsetH(s8 *offset)
 	return 0;
 }
 
-s32 SYSCONF_GetPadDevices(sysconf_pad_device *devs, int count) 
+s32 SYSCONF_GetPadDevices(sysconf_pad_device *devs, int count)
 {
 	int res;
 	u8 buf[0x461];
-	
+
 	res = SYSCONF_Get("BT.DINF", buf, 0x461);
 	if(res < 0) return res;
 	if((res < 1) || (buf[0] > 0x10)) return SYSCONF_EBADVALUE;
@@ -799,99 +843,97 @@ s32 SYSCONF_GetVideo(void)
 	return SYSCONF_EBADVALUE;
 }
 
-s32 SYSCONF_SetShutdownMode(u8 value) 
+s32 SYSCONF_SetShutdownMode(u8 value)
 {
 	u8 idlesysconf[2] = {0,0};
 	int res;
 	res = SYSCONF_Get("IPL.IDL", idlesysconf, 2);
 	if(res<0) return res;
 	if(res!=2) return SYSCONF_EBADVALUE;
-	
+
 	idlesysconf[0] = value;
-	
+
 	return SYSCONF_Set("IPL.IDL", idlesysconf, 2);
 }
 
-s32 SYSCONF_SetIdleLedMode(u8 value) 
+s32 SYSCONF_SetIdleLedMode(u8 value)
 {
 	u8 idlesysconf[2] = {0,0};
 	int res;
 	res = SYSCONF_Get("IPL.IDL", idlesysconf, 2);
 	if(res<0) return res;
 	if(res!=2) return SYSCONF_EBADVALUE;
-	
+
 	idlesysconf[1] = value;
-	
+
 	return SYSCONF_Set("IPL.IDL", idlesysconf, 2);
 }
 
-
-s32 SYSCONF_SetProgressiveScan(u8 value) 
+s32 SYSCONF_SetProgressiveScan(u8 value)
 {
 	return SYSCONF_Set("IPL.PGS", &value, 1);
 }
 
-s32 SYSCONF_SetEuRGB60(u8 value) 
+s32 SYSCONF_SetEuRGB60(u8 value)
 {
 	return SYSCONF_Set("IPL.E60", &value, 1);
 }
 
-
-s32 SYSCONF_SetIRSensitivity(u32 value) 
+s32 SYSCONF_SetIRSensitivity(u32 value)
 {
 	return SYSCONF_Set("BT.SENS", &value, 4);
 }
 
-s32 SYSCONF_SetSensorBarPosition(u8 value) 
+s32 SYSCONF_SetSensorBarPosition(u8 value)
 {
 	return SYSCONF_Set("BT.BAR", &value, 1);
 }
 
-s32 SYSCONF_SetPadSpeakerVolume(u8 value) 
+s32 SYSCONF_SetPadSpeakerVolume(u8 value)
 {
 	return SYSCONF_Set("BT.SPKV", &value, 1);
 }
 
-s32 SYSCONF_SetPadMotorMode(u8 value) 
+s32 SYSCONF_SetPadMotorMode(u8 value)
 {
 	return SYSCONF_Set("BT.MOT", &value, 1);
 }
 
-s32 SYSCONF_SetSoundMode(u8 value) 
+s32 SYSCONF_SetSoundMode(u8 value)
 {
 	return SYSCONF_Set("IPL.SND", &value, 1);
 }
 
-s32 SYSCONF_SetLanguage(u8 value) 
+s32 SYSCONF_SetLanguage(u8 value)
 {
 	return SYSCONF_Set("IPL.LNG", &value, 1);
 }
 
-s32 SYSCONF_SetCounterBias(u32 bias) 
+s32 SYSCONF_SetCounterBias(u32 bias)
 {
-	return  SYSCONF_Set("IPL.CB", &bias, 4);
+	return SYSCONF_Set("IPL.CB", &bias, 4);
 }
 
-s32 SYSCONF_SetScreenSaverMode(u8 value) 
+s32 SYSCONF_SetScreenSaverMode(u8 value)
 {
 	return SYSCONF_Set("IPL.SSV", &value, 1);
 }
 
-s32 SYSCONF_SetDisplayOffsetH(s8 offset) 
+s32 SYSCONF_SetDisplayOffsetH(s8 offset)
 {
 	return SYSCONF_Set("IPL.DH", &offset, 1);
 }
 
-s32 SYSCONF_SetPadDevices(const sysconf_pad_device *devs, u8 count) 
+s32 SYSCONF_SetPadDevices(const sysconf_pad_device *devs, u8 count)
 {
 	u8 buf[0x461] = {0};
-	
+
 	if(count > 0x10) return SYSCONF_EBADVALUE;
 	buf[0] = count;
-	
+
 	if(devs)
 		memcpy(&buf[1],devs,count*sizeof(sysconf_pad_device));
-	
+
 	return SYSCONF_Set("BT.DINF", buf, 0x461);
 }
 
@@ -900,7 +942,7 @@ s32 SYSCONF_SetNickName(const u8 *nickname, u16 length)
 	int i;
 	u16 buf[11] = {0};
 	if (length >10) return SYSCONF_EBADVALUE;
-		
+
 	for(i=0; i<length; i++)
 		buf[i] = nickname[i];
 	buf[10] = length;
@@ -924,7 +966,7 @@ s32 SYSCONF_SetParentalPassword(const s8 *password, u32 length)
 	int res;
 	u8 buf[0x4A] = {0};
 	if (length != 4) return SYSCONF_EBADVALUE;
-	
+
 	res = SYSCONF_Get("IPL.PC", buf, 0x4A);
 	if(res < 0) return res;
 	if(res!=1) return SYSCONF_EBADVALUE;
@@ -945,7 +987,7 @@ s32 SYSCONF_SetParentalAnswer(const s8 *answer, u32 length)
 	if(res!=1) return SYSCONF_EBADVALUE;
 
 	memcpy(buf+8, answer, length);
-	
+
 	return SYSCONF_Set("IPL.PC", buf, 0x4A);
 }
 

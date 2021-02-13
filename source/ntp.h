@@ -18,7 +18,7 @@
 #define MODE(packet) (uint8_t) ((packet.li_vn_mode & 0x07) >> 0) // (mode & 00 000 111) >> 0
 
 #define NTP_PORT 123
-#define NTP_HOST "us.pool.ntp.org"
+#define NTP_HOST "pool.ntp.org"
 
 typedef struct {
     uint8_t li_vn_mode;      // Eight bits. li, vn, and mode.

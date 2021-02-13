@@ -32,12 +32,7 @@ distribution.
 
 #include <stdio.h>
 #include <string.h>
-#include <malloc.h>
 #include <stdlib.h>
-
-#include <ogc/ipc.h>
-#include <ogc/isfs.h>
-#include <ogc/es.h>
 
 #include <wiiuse/wpad.h>
 

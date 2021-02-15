@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+  <name>sntp</name>
+  <coder>ErikZ</coder>
+  <version>1.0.0</version>
+  <release_date>20210215170000</release_date>
+  <short_description>NTP time synchronizer</short_description> 
+  <long_description>Synchronizes the system time to the Network Time Protocol (NTP).
+  Time zones have to be manually adjusted
+  </long_description> 
+</app>

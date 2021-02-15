@@ -178,7 +178,7 @@ void *ntp_client(void *arg) {
 
 	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
-	printf("Resolved %s to %s\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
+	printf("Resolved %s to %s\n\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
 
 	serv_addr.sin_port = htons(NTP_PORT);
 
@@ -229,10 +229,8 @@ void *ntp_client(void *arg) {
 		printf("%s:%d. Failed to get counter bias. Err: %d. Aborting!\n", __FILE__, __LINE__, n);
 		return NULL;
 	}
-	printf("Counter bias is %u\n", bias);
 
 	local_time = rtc_s + bias;
-	printf("ntp time: %llu, local time: %llu, diff: %lld\n", ntp_time_in_gc_epoch, local_time, ntp_time_in_gc_epoch - local_time);
 
 	printf("Use left and right button to adjust time zone of time below.\nPress A to write time to system memory\n");
 
@@ -247,9 +245,8 @@ void *ntp_client(void *arg) {
 		bias -= local_time - ntp_time_in_gc_epoch;
 	}
 
+	uint32_t old_rtc_s = 0;
 	while (true) {
-		uint32_t old_rtc_s = 0;
-
 		queue_item *q = (queue_item *) __lwp_queue_get(&queue);
 
 		n = __SYS_GetRTC(&rtc_s);
@@ -263,10 +260,11 @@ void *ntp_client(void *arg) {
 			local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
 
 			char s[80];
-			struct tm * p = localtime((time_t *) &local_time);
+			struct tm *p = localtime((time_t *) &local_time);
 			strftime(s, 80, "%H:%M:%S %A %B %d %Y", p);
 
-			printf("\rNew system time: %s (Timezone: %+03d)", s, timezone);
+			printf("\rNew system time: %s (Timezone: %+03d)    ", s, timezone);
+			fflush(stdout);
 		}
 
 		if (q == NULL) {
@@ -294,7 +292,7 @@ void *ntp_client(void *arg) {
 				printf("Failed to set counter bias. Err: %d. Aborting!\n", n);
 				return NULL;
 			}
-			printf("Checking written counter bias value\n");
+			printf("Checking time written (counter bias) value\n");
 			chk_bias = 0;
 			n = SYSCONF_GetCounterBias(&chk_bias);
 			if (n < 0) {
@@ -307,32 +305,10 @@ void *ntp_client(void *arg) {
 				return NULL;
 			}
 
-			printf("Counter bias successfully updated. You can now terminate this program by pressing the home key or continue to alter the time zones\n");
+			printf("Time (Counter bias) successfully updated.\nYou can now terminate this program by pressing the home key or continue to alter the time zones\n");
 		}
 		free(q);
 	}
-
-	/* if (ntp_time_in_gc_epoch > local_time) { */
-	/* 	// Need to increase counter bias to sync with ntp time */
-	/* 	printf("Increasing bias by %llu\n", ntp_time_in_gc_epoch - local_time); */
-	/* 	bias += (ntp_time_in_gc_epoch - local_time); */
-	/* } else { */
-	/* 	printf("Decreasing bias by %llu\n", local_time - ntp_time_in_gc_epoch); */
-	/* 	// Need to decrease counter bias to sync with ntp_time */
-	/* 	bias -= (local_time - ntp_time_in_gc_epoch); */
-	/* } */
-	/* printf("Adjusting bias to %u\n", bias); */
-
-	/* printf("Rereading counter bias\n"); */
-	/* n = SYSCONF_GetCounterBias(&bias); */
-	/* if (n < 0) { */
-	/* 	printf("Failed to get counter bias. Err: %d. Aborting!\n", n); */
-	/* 	return NULL; */
-	/* } */
-
-	/* local_time = rtc_s + bias; */
-	/* printf("ntp time: %llu, local time: %llu, diff: %lld\n", ntp_time_in_gc_epoch, local_time, ntp_time_in_gc_epoch - local_time); */
-
 
 	return NULL;
 }

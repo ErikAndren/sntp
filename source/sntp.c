@@ -56,10 +56,7 @@ int main(int argc, char **argv) {
 
 	__lwp_queue_init_empty(&queue);
 
-	printf ("\nNTP client demo\n");
-	printf("Configuring network. Continously press home key to abort\n");
-
-	net_deinit();
+	printf ("\nNTP time synchronizer\n");
 
 	ret = SYSCONF_Init();
 	if (ret < 0) {
@@ -73,14 +70,18 @@ int main(int argc, char **argv) {
 	    u32 buttonsDown = WPAD_ButtonsDown(0);
 
 		if (buttonsDown & WPAD_BUTTON_HOME) {
-			printf("Home button pressed. Exiting...\n");
+			printf("\nHome button pressed. Exiting...\n");
 			exit(0);
 		}
 
-		printf("\rTry: %d", i);
+		printf("\rTry: % 2d of configuring network. Hold home key to abort", i);
+		fflush(stdout);
+
+		net_deinit();
+
 		ret = net_init();
 		if ((ret == -EAGAIN) || (ret == -ETIMEDOUT)) {
-			usleep(50 * 1000);
+			usleep(10 * 1000);
 			continue;
 		}
 		break;
@@ -98,7 +99,7 @@ int main(int argc, char **argv) {
 		exit(0);
 	}
 
-	printf("Network configured, ip: %s\n", inet_ntoa(hostip));
+	printf("Network configured, local ip: %s\n", inet_ntoa(hostip));
 
 	if (LWP_CreateThread(&ntp_handle,	/* thread handle */
 					 ntp_client,	/* code */
@@ -118,7 +119,7 @@ int main(int argc, char **argv) {
 		buttonsDown = WPAD_ButtonsDown(0);
 
 		if (buttonsDown & WPAD_BUTTON_HOME) {
-			printf("Home button pressed. Exiting...\n");
+			printf("\nHome button pressed. Exiting...\n");
 			exit(0);
 		}
 
@@ -130,7 +131,6 @@ int main(int argc, char **argv) {
 			}
 			q->buttonsDown = buttonsDown;
 
-//			printf("Enqueing queue with item: 0x%x\n", q->buttonsDown);
 			__lwp_queue_append(&queue, (lwp_node *) q);
 		}
 	}
@@ -173,22 +173,13 @@ void *ntp_client(void *arg) {
 
 	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
-	printf("Resolved %s to %s\n\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
+	printf("Resolved NTP server %s to %s\n\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
 
 	serv_addr.sin_port = htons(NTP_PORT);
 
-	for (int i = 0; i < 50; i++) {
-		n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
-		if (n < 0) {
-			printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
-			usleep(50 * 1000);
-		} else {
-			break;
-		}
-	}
+	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 	if (n < 0) {
-		printf("Giving up\n");
-		return NULL;
+		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
 	}
 
 	n = net_write(sockfd, &packet, sizeof(ntp_packet));
@@ -216,7 +207,6 @@ void *ntp_client(void *arg) {
 		return NULL;
 	}
 
-	time_t txTm = (time_t) (packet.txTm_s - NTP_TO_UNIX_EPOCH_DELTA);
 	ntp_time_in_gc_epoch = packet.txTm_s - NTP_TO_GC_EPOCH_DELTA;
 
 	n = SYSCONF_GetCounterBias(&bias);
@@ -227,9 +217,7 @@ void *ntp_client(void *arg) {
 
 	local_time = rtc_s + bias;
 
-	printf("Use left and right button to adjust time zone of time below.\nPress A to write time to system memory\n");
-
-	printf("NTP Time: %s\n", ctime(&txTm));
+	printf("Use left and right button to adjust time zone\nPress A to write time to system config\n");
 
 	timezone = 0;
 
@@ -258,7 +246,7 @@ void *ntp_client(void *arg) {
 			struct tm *p = localtime((time_t *) &local_time);
 			strftime(s, 80, "%H:%M:%S %A %B %d %Y", p);
 
-			printf("\rNew system time: %s (Timezone: %+03d)    ", s, timezone);
+			printf("\rProposed NTP system time: %s (Timezone: %+03d)    ", s, timezone);
 			fflush(stdout);
 		}
 
@@ -286,6 +274,13 @@ void *ntp_client(void *arg) {
 				printf("Failed to set counter bias. Err: %d. Aborting!\n", n);
 				return NULL;
 			}
+
+			n = SYSCONF_SaveChanges();
+			if (n != 0) {
+				printf("Failed to save updated counter bias. Err: %d\n", n);
+			}
+			printf("Successfully saved counter bias change\n");
+
 			printf("Checking time written (counter bias) value\n");
 			chk_bias = 0;
 			n = SYSCONF_GetCounterBias(&chk_bias);
@@ -299,7 +294,7 @@ void *ntp_client(void *arg) {
 				return NULL;
 			}
 
-			printf("Time (Counter bias) successfully updated.\nYou can now terminate this program by pressing the home key or continue to alter the time zones\n");
+			printf("Time (Counter bias) successfully updated.\nYou can now terminate this program by pressing the home key or continue to adjust the time zones\n");
 		}
 		free(q);
 	}

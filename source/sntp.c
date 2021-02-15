@@ -29,8 +29,6 @@ typedef struct _queue_item {
 	u32 buttonsDown;
 } queue_item;
 
-//static queue_item queue_items[MAX_QUEUE_ITEMS];
-
 static __inline__ lwp_node* __lwp_queue_head(lwp_queue *queue)
 {
 	return (lwp_node*)queue;
@@ -118,9 +116,6 @@ int main(int argc, char **argv) {
 		WPAD_ScanPads();
 
 		buttonsDown = WPAD_ButtonsDown(0);
-		/* if (buttonsDown != 0) { */
-		/* 	printf("Buttons: 0x%0x\n", buttonsDown); */
-		/* } */
 
 		if (buttonsDown & WPAD_BUTTON_HOME) {
 			printf("Home button pressed. Exiting...\n");
@@ -268,8 +263,7 @@ void *ntp_client(void *arg) {
 		}
 
 		if (q == NULL) {
-			//FIXME: Replace with thread yield
-			usleep(50 * 1000);
+			LWP_YieldThread();
 			continue;
 		}
 

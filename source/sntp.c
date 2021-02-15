@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	for (int i = 0; i < NO_RETRIES; i++) {
+	for (int i = 1; i <= NO_RETRIES; i++) {
 		WPAD_ScanPads();
 
 	    u32 buttonsDown = WPAD_ButtonsDown(0);

@@ -180,6 +180,7 @@ void *ntp_client(void *arg) {
 	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 	if (n < 0) {
 		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
+		return NULL;
 	}
 
 	n = net_write(sockfd, &packet, sizeof(ntp_packet));
@@ -189,7 +190,7 @@ void *ntp_client(void *arg) {
 	}
 
 	n = net_read(sockfd, &packet, sizeof(ntp_packet));
-	if (n < 0) {
+	if (n < sizeof(ntp_packet)) {
 		if (n < 0) {
 			printf("Error while receiving ntp packet. Err: %d:%s. Aborting!\n", n, strerror(n));
 		} else {
@@ -222,11 +223,7 @@ void *ntp_client(void *arg) {
 	timezone = 0;
 
 	// Calculate new bias
-	if (ntp_time_in_gc_epoch > local_time) {
-		bias += ntp_time_in_gc_epoch - local_time;
-	} else {
-		bias -= local_time - ntp_time_in_gc_epoch;
-	}
+	bias = ntp_time_in_gc_epoch - rtc_s;
 
 	uint32_t old_rtc_s = 0;
 	while (true) {

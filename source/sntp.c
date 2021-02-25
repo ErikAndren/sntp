@@ -226,6 +226,9 @@ void *ntp_client(void *arg) {
 	bias = ntp_time_in_gc_epoch - rtc_s;
 
 	uint32_t old_rtc_s = 0;
+	char time_str[80];
+	struct tm *p;
+
 	while (true) {
 		queue_item *q = (queue_item *) __lwp_queue_get(&queue);
 
@@ -239,11 +242,10 @@ void *ntp_client(void *arg) {
 			old_rtc_s = rtc_s;
 			local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
 
-			char s[80];
-			struct tm *p = localtime((time_t *) &local_time);
-			strftime(s, 80, "%H:%M:%S %A %B %d %Y", p);
+			p = localtime((time_t *) &local_time);
+			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
 
-			printf("\rProposed NTP system time: %s (Timezone: %+03d)    ", s, timezone);
+			printf("\rProposed NTP system time: %s (Timezone: %+03d)   ", time_str, timezone);
 			fflush(stdout);
 		}
 
@@ -291,7 +293,12 @@ void *ntp_client(void *arg) {
 				return NULL;
 			}
 
-			printf("Time (Counter bias) successfully updated.\nYou can now terminate this program by pressing the home key or continue to adjust the time zones\n");
+			local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
+			p = localtime((time_t *) &local_time);
+			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
+
+			printf("Time successfully updated to: %s\n", time_str);
+			printf("You may now terminate this program by pressing the home key\n(or continue to adjust the time zones)\n");
 		}
 		free(q);
 	}

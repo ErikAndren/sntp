@@ -4,6 +4,7 @@
 #include <malloc.h>
 #include <network.h>
 #include <errno.h>
+#include <fat.h>
 
 #include <wiiuse/wpad.h>
 #include <ogc/lwp_queue.h>
@@ -69,7 +70,10 @@ int main(int argc, char **argv) {
 
 	    u32 buttonsDown = WPAD_ButtonsDown(0);
 
-		if (buttonsDown & WPAD_BUTTON_HOME) {
+		PAD_ScanPads();
+		u32 buttonsDownGC = PAD_ButtonsHeld(0);
+
+		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
 			printf("\nHome button pressed. Exiting...\n");
 			exit(0);
 		}
@@ -112,17 +116,32 @@ int main(int argc, char **argv) {
 	}
 
 	uint32_t buttonsDown;
+	u32 buttonsDownGC;
 	while (true) {
 		VIDEO_WaitVSync();
 		WPAD_ScanPads();
 
 		buttonsDown = WPAD_ButtonsDown(0);
+		PAD_ScanPads();
+		buttonsDownGC = PAD_ButtonsHeld(0);
 
-		if (buttonsDown & WPAD_BUTTON_HOME) {
+		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
 			printf("\nHome button pressed. Exiting...\n");
 			exit(0);
 		}
-
+		if (buttonsDownGC != 0) {
+			usleep(200 * 1000); // avoid duplicated GC button presses
+		}
+		if (buttonsDownGC & PAD_BUTTON_LEFT) {
+			buttonsDown |= WPAD_BUTTON_LEFT;
+		}
+		if (buttonsDownGC & PAD_BUTTON_RIGHT) {
+			buttonsDown |= WPAD_BUTTON_RIGHT;
+		}
+		if (buttonsDownGC & PAD_BUTTON_A) {
+			buttonsDown |= WPAD_BUTTON_A;
+		}
+		
 		if (buttonsDown != 0) {
 			queue_item *q = malloc(sizeof(queue_item));
 			if (q == NULL) {
@@ -148,6 +167,18 @@ void *ntp_client(void *arg) {
 	uint64_t ntp_time_in_gc_epoch;
 	u32 bias, chk_bias;
 	s32 timezone;
+	char ntp_host[80];
+	FILE *ntpf;
+	
+	// allow overriding default ntp server 
+	strcpy(ntp_host, NTP_HOST);
+	chdir(NTP_HOME);
+	ntpf = fopen(NTP_FILE, "r");
+	if(ntpf != NULL) {
+		fgets(ntp_host, sizeof(ntp_host), ntpf);
+		fclose(ntpf);
+		printf("Using NTP server %s from file %s\n", ntp_host, NTP_FILE);
+	}
 
 	memset(&packet, 0, sizeof(ntp_packet));
 
@@ -162,9 +193,9 @@ void *ntp_client(void *arg) {
 		return NULL;
 	}
 
-	server = net_gethostbyname(NTP_HOST);
+	server = net_gethostbyname(ntp_host);
 	if (server == NULL) {
-		printf("Failed to resolve ntp host %s. Errno: %d, %s. Aborting!\n", NTP_HOST, errno, strerror(errno));
+		printf("Failed to resolve ntp host %s. Errno: %d, %s. Aborting!\n", ntp_host, errno, strerror(errno));
 		return NULL;
 	}
 
@@ -173,7 +204,7 @@ void *ntp_client(void *arg) {
 
 	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
-	printf("Resolved NTP server %s to %s\n\n", NTP_HOST, inet_ntoa(serv_addr.sin_addr));
+	printf("Resolved NTP server %s to %s\n\n", ntp_host, inet_ntoa(serv_addr.sin_addr));
 
 	serv_addr.sin_port = htons(NTP_PORT);
 
@@ -313,6 +344,8 @@ void *initialise() {
 	void *framebuffer;
 
 	VIDEO_Init();
+	fatInitDefault();
+	PAD_Init();
 	if (WPAD_Init() != WPAD_ERR_NONE) {
 		printf("Failed to initialize any wii motes\n");
 	}

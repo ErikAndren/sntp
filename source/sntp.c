@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
 	    u32 buttonsDown = WPAD_ButtonsDown(0);
 
 		PAD_ScanPads();
-		u32 buttonsDownGC = PAD_ButtonsHeld(0);
+		u32 buttonsDownGC = PAD_ButtonsDown(0);
 
 		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
 			printf("\nHome button pressed. Exiting...\n");
@@ -123,14 +123,11 @@ int main(int argc, char **argv) {
 
 		buttonsDown = WPAD_ButtonsDown(0);
 		PAD_ScanPads();
-		buttonsDownGC = PAD_ButtonsHeld(0);
+		buttonsDownGC = PAD_ButtonsDown(0);
 
 		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
 			printf("\nHome button pressed. Exiting...\n");
 			exit(0);
-		}
-		if (buttonsDownGC != 0) {
-			usleep(200 * 1000); // avoid duplicated GC button presses
 		}
 		if (buttonsDownGC & PAD_BUTTON_LEFT) {
 			buttonsDown |= WPAD_BUTTON_LEFT;

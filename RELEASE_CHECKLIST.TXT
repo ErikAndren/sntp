@@ -1,0 +1,2 @@
+1. Update meta.xml with new version
+2. Create release archive with correct version numbering

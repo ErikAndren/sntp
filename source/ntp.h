@@ -19,6 +19,8 @@
 
 #define NTP_PORT 123
 #define NTP_HOST "pool.ntp.org"
+#define NTP_HOME "sd:/apps/sntp"
+#define NTP_FILE "ntpserver.cfg"
 
 typedef struct {
     uint8_t li_vn_mode;      // Eight bits. li, vn, and mode.

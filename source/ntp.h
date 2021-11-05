@@ -21,6 +21,14 @@
 #define NTP_HOST "pool.ntp.org"
 #define NTP_HOME "sd:/apps/sntp"
 #define NTP_FILE "ntpserver.cfg"
+#define NTP_TZDB "tzdb.cfg"
+
+// some definitions required to use wplaat's networking library html.[hc]
+#define PROGRAM_NAME		"sntp"
+#define PROGRAM_VERSION		"1.1.0"
+#define MAX_LEN				1024
+#define TRACE_FILENAME		NTP_HOME "/sntp.trc"
+#define URL_TOKEN			"\"gmtOffset\":"
 
 typedef struct {
     uint8_t li_vn_mode;      // Eight bits. li, vn, and mode.

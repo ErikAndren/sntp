@@ -28,7 +28,7 @@
 #define PROGRAM_VERSION		"1.1.0"
 #define MAX_LEN				1024
 #define TRACE_FILENAME		NTP_HOME "/sntp.trc"
-#define URL_TOKEN			"\"gmtOffset\":"
+#define URL_TOKEN			"\"gmtOffset\": "
 
 typedef struct {
     uint8_t li_vn_mode;      // Eight bits. li, vn, and mode.

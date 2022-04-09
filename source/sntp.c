@@ -11,14 +11,19 @@
 
 #include "ntp.h"
 #include "sysconf.h"
+#include "http.h"
+#include "trace.h"
 
 extern u32 __SYS_GetRTC(u32 *gctime);
 
 void *initialise();
 void *ntp_client(void *arg);
+void get_tz_offset();
 
 static void *xfb = NULL;
-static GXRModeObj *rmode = NULL;
+GXRModeObj *rmode = NULL;
+static s32 gmt_offset = 0;
+static bool autosave = false;
 
 static lwp_t ntp_handle = (lwp_t) NULL;
 
@@ -64,6 +69,7 @@ int main(int argc, char **argv) {
 		printf("Failed to init sysconf and settings.txt. Err: %d\n", ret);
 		exit(1);
 	}
+	get_tz_offset();
 
 	for (int i = 1; i <= NO_RETRIES; i++) {
 		WPAD_ScanPads();
@@ -163,8 +169,8 @@ void *ntp_client(void *arg) {
 	uint64_t local_time;
 	uint64_t ntp_time_in_gc_epoch;
 	u32 bias, chk_bias;
-	s32 timezone;
-	char ntp_host[80];
+	s32 timezone, timezone_min;
+	char ntp_host[80], timezone_min_str[80];
 	FILE *ntpf;
 	
 	// allow overriding default ntp server 
@@ -248,10 +254,11 @@ void *ntp_client(void *arg) {
 
 	printf("Use left and right button to adjust time zone\nPress A to write time to system config\n");
 
-	timezone = 0;
+	timezone = gmt_offset / 3600;
+	timezone_min = abs(gmt_offset % 3600 / 60);
 
 	// Calculate new bias
-	bias = ntp_time_in_gc_epoch - rtc_s;
+	bias = ntp_time_in_gc_epoch - rtc_s + gmt_offset;
 
 	uint32_t old_rtc_s = 0;
 	char time_str[80];
@@ -273,28 +280,36 @@ void *ntp_client(void *arg) {
 			p = localtime((time_t *) &local_time);
 			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
 
-			printf("\rProposed NTP system time: %s (Timezone: %+03d)   ", time_str, timezone);
+			if(timezone_min != 0)
+			{
+				snprintf(timezone_min_str, sizeof(timezone_min_str),":%d",timezone_min);
+			}
+			else
+			{
+				strcpy(timezone_min_str, "");
+			}
+			printf("\rProposed NTP system time: %s (Timezone: %+03d%s)   ", time_str, timezone, timezone_min_str);
 			fflush(stdout);
 		}
 
-		if (q == NULL) {
+		if (q == NULL && !autosave) {
 			LWP_YieldThread();
 			continue;
 		}
 
-		if (q->buttonsDown & WPAD_BUTTON_LEFT) {
+		if (q && q->buttonsDown & WPAD_BUTTON_LEFT) {
 			if (timezone > -12) {
 				timezone--;
 				bias -= 3600;
 			}
 
-		} else if (q->buttonsDown & WPAD_BUTTON_RIGHT) {
+		} else if (q && q->buttonsDown & WPAD_BUTTON_RIGHT) {
 			if (timezone < 12) {
 				timezone++;
 				bias += 3600;
 			}
 
-		} else if (q->buttonsDown & WPAD_BUTTON_A) {
+		} else if (autosave || q->buttonsDown & WPAD_BUTTON_A) {
 			printf("\nWriting new time (bias) to sysconf\n");
 			n = SYSCONF_SetCounterBias(bias);
 			if (n < 0) {
@@ -326,6 +341,11 @@ void *ntp_client(void *arg) {
 			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
 
 			printf("Time successfully updated to: %s\n", time_str);
+			if(autosave)
+			{
+				printf("Auto save is On and completed so exiting...\n");
+				exit(0);
+			}
 			printf("You may now terminate this program by pressing the home key\n(or continue to adjust the time zones)\n");
 		}
 		free(q);
@@ -361,4 +381,66 @@ void *initialise() {
 	}
 
 	return framebuffer;
+}
+//---------------------------------------------------------------------------------
+void get_tz_offset() {
+//---------------------------------------------------------------------------------
+
+	char *s_fn="get_tz_offset" ;
+	FILE *tzdbf;
+	char userData1[MAX_LEN];
+	char userData2[MAX_LEN];
+	char tzurl[MAX_LEN];
+	char autosavebuf[MAX_LEN] = "manualsave";
+	
+	// if config file exists, try to get timezone offset online
+	chdir(NTP_HOME);
+	tzdbf = fopen(NTP_TZDB, "r");
+	if(tzdbf == NULL)
+		return;
+
+	printf("Using timezone URL from file %s\n", NTP_TZDB);
+
+	// Open trace module
+	traceOpen(TRACE_FILENAME);
+	traceEvent(s_fn, 0,"%s %s Started", PROGRAM_NAME, PROGRAM_VERSION);
+
+	fgets(tzurl, sizeof(tzurl), tzdbf);
+	fgets(autosavebuf, sizeof(autosavebuf), tzdbf);
+	fclose(tzdbf);
+	tzurl[strcspn(tzurl, "\r\n")] = 0;
+
+	if(strstr(autosavebuf,"autosave") != NULL)
+	{
+		autosave = true;
+	}
+	printf("Auto save is %s\n", autosave ? "On" : "Off");
+
+	tcp_start_thread(PROGRAM_NAME, PROGRAM_VERSION, 
+						"", tzurl, 
+						"", "", 
+						"", "", 
+						"", "", 
+						URL_TOKEN, userData1, userData2);
+	printf("Querying online for GMT offset...\n");
+	int tcp_state = tcp_get_state_nr();
+	for(int retries = 0; retries < 15 && tcp_state != TCP_IDLE; ++retries)
+	{
+		sleep(1);
+		tcp_state = tcp_get_state_nr();
+	}
+	if(tcp_state == TCP_IDLE)
+	{
+		gmt_offset = atoi(tcp_get_version());
+		printf("Found GMT offset online of %d\n", gmt_offset);
+	}
+	else
+	{
+		printf("GMT offset not found online\n");
+		autosave = false;
+	}
+	tcp_stop_thread();
+
+	traceEvent(s_fn, 0,"%s %s Stopped", PROGRAM_NAME, PROGRAM_VERSION);
+	traceClose();
 }

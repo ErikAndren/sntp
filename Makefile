@@ -21,6 +21,8 @@ SOURCES		:=	source
 DATA		:=	data  
 INCLUDES	:=
 
+RELEASE_VERSION :=	"v1.2.0"
+
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
@@ -108,6 +110,16 @@ clean:
 run:
 	wiiload $(TARGET).dol
 
+release: $(BUILD)
+	@rm -rf releases/sntp
+	@mkdir -p releases/sntp
+	@cp hbc/* releases/sntp/
+	@cp sntp.dol releases/sntp/
+	@cp sntp.dol releases/sntp/boot.dol
+	@zip releases/sntp-$(RELEASE_VERSION).zip releases/sntp/*
+	@git add releases/sntp-$(RELEASE_VERSION).zip
+	@git commit -m "Add release $(RELEASE_VERSION)" releases/sntp-$(RELEASE_VERSION).zip
+	@git tag -f $(RELEASE_VERSION)
 
 #---------------------------------------------------------------------------------
 else

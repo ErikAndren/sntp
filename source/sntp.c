@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
 
 	__lwp_queue_init_empty(&queue);
 
-	printf ("\nNTP time synchronizer\n");
+	printf ("\nNTP time synchronizer %s %s\n", PROGRAM_NAME, PROGRAM_VERSION);
 
 	ret = SYSCONF_Init();
 	if (ret < 0) {
@@ -432,7 +432,7 @@ void get_tz_offset() {
 	if(tcp_state == TCP_IDLE)
 	{
 		gmt_offset = atoi(tcp_get_version());
-		printf("Found GMT offset online of %d\n", gmt_offset);
+		printf("Found GMT offset online of %d seconds\n", gmt_offset);
 	}
 	else
 	{

@@ -25,7 +25,6 @@
 
 // some definitions required to use wplaat's networking library html.[hc]
 #define PROGRAM_NAME		"sntp"
-#define PROGRAM_VERSION		"1.1.0"
 #define MAX_LEN				1024
 #define TRACE_FILENAME		NTP_HOME "/sntp.trc"
 #define URL_TOKEN			"\"gmtOffset\": "

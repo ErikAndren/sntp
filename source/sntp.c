@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
 		if (buttonsDownGC & PAD_BUTTON_A) {
 			buttonsDown |= WPAD_BUTTON_A;
 		}
-		
+
 		if (buttonsDown != 0) {
 			queue_item *q = malloc(sizeof(queue_item));
 			if (q == NULL) {
@@ -172,8 +172,8 @@ void *ntp_client(void *arg) {
 	s32 timezone, timezone_min;
 	char ntp_host[80], timezone_min_str[80];
 	FILE *ntpf;
-	
-	// allow overriding default ntp server 
+
+	// allow overriding default ntp server
 	strcpy(ntp_host, NTP_HOST);
 	chdir(NTP_HOME);
 	ntpf = fopen(NTP_FILE, "r");
@@ -298,16 +298,12 @@ void *ntp_client(void *arg) {
 		}
 
 		if (q && q->buttonsDown & WPAD_BUTTON_LEFT) {
-			if (timezone > -12) {
-				timezone--;
-				bias -= 3600;
-			}
+			timezone--;
+			bias -= 3600;
 
 		} else if (q && q->buttonsDown & WPAD_BUTTON_RIGHT) {
-			if (timezone < 12) {
-				timezone++;
-				bias += 3600;
-			}
+			timezone++;
+			bias += 3600;
 
 		} else if (autosave || q->buttonsDown & WPAD_BUTTON_A) {
 			printf("\nWriting new time (bias) to sysconf\n");
@@ -392,7 +388,7 @@ void get_tz_offset() {
 	char userData2[MAX_LEN];
 	char tzurl[MAX_LEN];
 	char autosavebuf[MAX_LEN] = "manualsave";
-	
+
 	// if config file exists, try to get timezone offset online
 	chdir(NTP_HOME);
 	tzdbf = fopen(NTP_TZDB, "r");
@@ -416,11 +412,11 @@ void get_tz_offset() {
 	}
 	printf("Auto save is %s\n", autosave ? "On" : "Off");
 
-	tcp_start_thread(PROGRAM_NAME, PROGRAM_VERSION, 
-						"", tzurl, 
-						"", "", 
-						"", "", 
-						"", "", 
+	tcp_start_thread(PROGRAM_NAME, PROGRAM_VERSION,
+						"", tzurl,
+						"", "",
+						"", "",
+						"", "",
 						URL_TOKEN, userData1, userData2);
 	printf("Querying online for GMT offset...\n");
 	int tcp_state = tcp_get_state_nr();

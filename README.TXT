@@ -4,8 +4,8 @@ There are two options on how to use this utility:
 1. Manual adjustment using the wii mote or gamecube controller.
 Timezones are not remembered and will have to be adjusted manually by the user.
 
-2. Configuration using a timezone configuration file.
-Create a tzdb.cfg on the root of the SD card in your wii.
+2. Configuration using a timezone configuration file:
+Create a tzdb.cfg in the same directory as the sntp application on the SD card.
 
 Populate it with the following lines:
 

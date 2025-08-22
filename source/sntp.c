@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
 				update_time = now;
 				local_time = utc_time_in_gc_epoch + UNIX_EPOCH_TO_GC_EPOCH_DELTA + offset + diff_sec(start_time, now);
 
-				int timezone = offset;
+				int timezone = offset / 3600;
 				int timezone_min = abs(offset % 3600 / 60);
 				char timezone_min_str[8];
 

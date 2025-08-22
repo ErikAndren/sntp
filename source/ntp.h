@@ -12,16 +12,10 @@
 #define UNIX_EPOCH_TO_GC_EPOCH_DELTA 946684800ull
 #define NTP_TO_GC_EPOCH_DELTA (NTP_TO_UNIX_EPOCH_DELTA + UNIX_EPOCH_TO_GC_EPOCH_DELTA)
 
-
-#define LI(packet)   (uint8_t) ((packet.li_vn_mode & 0xC0) >> 6) // (li   & 11 000 000) >> 6
-#define VN(packet)   (uint8_t) ((packet.li_vn_mode & 0x38) >> 3) // (vn   & 00 111 000) >> 3
-#define MODE(packet) (uint8_t) ((packet.li_vn_mode & 0x07) >> 0) // (mode & 00 000 111) >> 0
-
 #define NTP_PORT 123
 #define NTP_HOST "pool.ntp.org"
-#define NTP_HOME "sd:/apps/sntp"
-#define NTP_FILE "ntpserver.cfg"
-#define NTP_TZDB "tzdb.cfg"
+#define NTP_HOME "/apps/sntp"
+#define NTP_FILE "sntp.cfg"
 
 // some definitions required to use wplaat's networking library html.[hc]
 #define PROGRAM_NAME		"sntp"
@@ -30,11 +24,18 @@
 #define TRACE_FILENAME		NTP_HOME "/sntp.trc"
 #define URL_TOKEN			"\"gmtOffset\": "
 
+struct sntp_config {
+	int offset;
+    bool specified_offset;
+	bool autosave;
+	char ntp_host[80];
+    char tzdb_url[MAX_LEN];
+};
+
 typedef struct {
-    uint8_t li_vn_mode;      // Eight bits. li, vn, and mode.
-                             // li.   Two bits.   Leap indicator.
-                             // vn.   Three bits. Version number of the protocol.
-                             // mode. Three bits. Client will pick mode 3 for client.
+    uint8_t li: 2;           // li.   Two bits.   Leap indicator.
+    uint8_t vn: 3;           // vn.   Three bits. Version number of the protocol.
+    uint8_t mode: 3;         // mode. Three bits. Client will pick mode 3 for client.
 
     uint8_t stratum;         // Eight bits. Stratum level of the local clock.
     uint8_t poll;            // Eight bits. Maximum interval between successive messages.
@@ -55,6 +56,5 @@ typedef struct {
 
     uint32_t txTm_s;         // 32 bits and the most important field the client cares about. Transmit time-stamp seconds.
     uint32_t txTm_f;         // 32 bits. Transmit time-stamp fraction of a second.
-
-  } ntp_packet;              // Total: 384 bits or 48 bytes.
+} ntp_packet;                // Total: 384 bits or 48 bytes.
 #endif

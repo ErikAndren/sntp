@@ -6,20 +6,23 @@
 #include <network.h>
 #include <errno.h>
 #include <fat.h>
+#include <ogc/conf.h>
 
 #include <wiiuse/wpad.h>
 #include <ogc/lwp_watchdog.h>
 
 #include "ntp.h"
 #include "kdtime.h"
-#include "sysconf.h"
+// #include "sysconf.h"
 #include "http.h"
 #include "trace.h"
 
+extern s32 CONF_Set(const char *name, const void *buffer, u32 length);
+extern s32 CONF_SaveChanges(void);
 extern u32 __SYS_GetRTC(u32 *gctime);
 
 void initialise();
-int ntp_get_time(uint64_t* gctime, uint64_t* ticks);
+int ntp_get_time(uint32_t* gctime, uint64_t* ticks);
 void get_tz_offset();
 
 static void *xfb = NULL;
@@ -129,15 +132,15 @@ int main(int argc, char **argv) {
 
 	uint32_t rtc_s;
 	time_t local_time;
-	uint64_t utc_time_in_gc_epoch;
+	uint32_t utc_time_in_gc_epoch;
 	uint64_t start_time = 0;
-	u32 bias;
+	s32 bias;
 
 	initialise();
 
 	printf ("\nNTP time synchronizer\n");
 
-	ret = SYSCONF_Init();
+	ret = CONF_Init();
 	if (ret < 0) {
 		printf("Failed to init sysconf and settings.txt. Err: %d\n", ret);
 		goto exit;
@@ -207,17 +210,8 @@ int main(int argc, char **argv) {
 
 				int timezone = offset / 3600;
 				int timezone_min = abs(offset % 3600 / 60);
-				char timezone_min_str[8];
 
-				if(timezone_min != 0)
-				{
-					snprintf(timezone_min_str, sizeof(timezone_min_str),":%d",timezone_min);
-				}
-				else
-				{
-					*timezone_min_str = '\0';
-				}
-				printf("\r\e[2K" "Proposed NTP system time: %s (Timezone: %+03d%s)", time_string(local_time), timezone, timezone_min_str);
+				printf("\r\e[2K" "Proposed NTP system time: %s (Timezone: %+03d:%02d)", time_string(local_time), timezone, timezone_min);
 				fflush(stdout);
 			}
 
@@ -238,6 +232,8 @@ int main(int argc, char **argv) {
 				loop = false;
 			}
 		}
+
+		sntp_config.offset = offset;
 	}
 
 	ret = __SYS_GetRTC(&rtc_s);
@@ -246,18 +242,19 @@ int main(int argc, char **argv) {
 		goto exit;
 	}
 
-	printf("\nWriting new time (bias) to sysconf\n");
-
 	// Calculate new bias
-	bias = (utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + sntp_config.offset) - rtc_s;
+	bias = (utc_time_in_gc_epoch + sntp_config.offset + diff_sec(start_time, gettime())) - rtc_s;
 
-	ret = SYSCONF_SetCounterBias(bias);
+	printf("\nWriting new time (bias) to sysconf\n");
+	printf("bias=%#x, rtc=%#x\n", bias, rtc_s);
+#pragma message "When do we get sysconf setter functions"
+	ret = CONF_Set("IPL.CB", &bias, sizeof(s32));
 	if (ret < 0) {
 		printf("Failed to set counter bias. Err: %d\n", ret);
 		goto exit;
 	}
 
-	ret = SYSCONF_SaveChanges();
+	ret = CONF_SaveChanges();
 	if (ret != 0) {
 		printf("Failed to save updated counter bias. Err: %d\n", ret);
 		goto exit;
@@ -276,7 +273,7 @@ exit:
 	return ret;
 }
 
-int ntp_get_time(uint64_t* gctime, uint64_t* ticks) {
+int ntp_get_time(uint32_t* gctime, uint64_t* ticks) {
 	int sockfd, n;
 	ntp_packet packet;
 	struct sockaddr_in serv_addr;
@@ -349,6 +346,7 @@ int ntp_get_time(uint64_t* gctime, uint64_t* ticks) {
 	sockfd = -1;
 	if (n < 0) {
 		printf("Failed to close NTP connection: \n%s (%d)\n", strerror(-n), n);
+		return n;
 	}
 
 	return 0;

@@ -11,6 +11,7 @@
 #include <ogc/lwp_watchdog.h>
 
 #include "ntp.h"
+#include "kdtime.h"
 #include "sysconf.h"
 #include "http.h"
 #include "trace.h"
@@ -178,12 +179,23 @@ int main(int argc, char **argv) {
 	if (ret < 0)
 		goto exit;
 
+	ret = KD_Init();
+	if (ret == 0) {
+		printf("Updating NWC24 Universal time\n");
+
+		time_t universal_time = utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
+		KD_RefreshRTCCounter(true);
+		ret = KD_SetUniversalTime(universal_time, true);
+		printf("KD_SetUniversalTime ret=%i\n", ret);
+
+		KD_Close();
+	}
+
 	get_tz_offset();
 	if (!sntp_config.autosave) {
 		printf("Use left and right button to adjust time zone\nPress A to write time to system config\n");
 
 		int offset = sntp_config.offset;
-
 
 		uint64_t update_time = 0;
 		bool loop = true;
@@ -259,8 +271,8 @@ int main(int argc, char **argv) {
 	ret = 0;
 
 exit:
-	printf("Exiting in 5 seconds...");
-	sleep(5);
+	printf("Exiting in 15 seconds...");
+	sleep(15);
 	return ret;
 }
 

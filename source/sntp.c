@@ -415,7 +415,7 @@ void get_tz_offset() {
 	else
 	{
 		printf("GMT offset not found online\n");
-		sntp_config.autosave = sntp_config.specified_offset;
+		sntp_config.autosave &= sntp_config.specified_offset;
 	}
 	tcp_stop_thread();
 

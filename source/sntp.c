@@ -189,6 +189,9 @@ int main(int argc, char **argv) {
 		time_t universal_time = utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
 		KD_RefreshRTCCounter(true);
 		ret = KD_SetUniversalTime(universal_time, true);
+		if (ret < 0) {
+			printf("KD_SetUniversalTime ret=%i\n", ret);
+		}
 
 		KD_Close();
 	}

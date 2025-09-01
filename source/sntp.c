@@ -189,7 +189,6 @@ int main(int argc, char **argv) {
 		time_t universal_time = utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
 		KD_RefreshRTCCounter(true);
 		ret = KD_SetUniversalTime(universal_time, true);
-		printf("KD_SetUniversalTime ret=%i\n", ret);
 
 		KD_Close();
 	}
@@ -208,10 +207,11 @@ int main(int argc, char **argv) {
 				update_time = now;
 				local_time = utc_time_in_gc_epoch + UNIX_EPOCH_TO_GC_EPOCH_DELTA + offset + diff_sec(start_time, now);
 
-				int timezone = offset / 3600;
+				int timezone = abs(offset / 3600);
 				int timezone_min = abs(offset % 3600 / 60);
 
-				printf("\r\e[2K" "Proposed NTP system time: %s (Timezone: %+03d:%02d)", time_string(local_time), timezone, timezone_min);
+				// The difference is now +-1800, so if offset is -1800, timezone is 0, and that makes a +
+				printf("\r\e[2K" "Proposed NTP system time: %s (Timezone: %c%02d:%02d)", time_string(local_time), offset < 0 ? '-' : '+', timezone, timezone_min);
 				fflush(stdout);
 			}
 
@@ -246,8 +246,8 @@ int main(int argc, char **argv) {
 	bias = (utc_time_in_gc_epoch + sntp_config.offset + diff_sec(start_time, gettime())) - rtc_s;
 
 	printf("\nWriting new time (bias) to sysconf\n");
-	printf("bias=%#x, rtc=%#x\n", bias, rtc_s);
-#pragma message "When do we get sysconf setter functions"
+	// to libogc: When do we get sysconf setter functions
+
 	ret = CONF_Set("IPL.CB", &bias, sizeof(s32));
 	if (ret < 0) {
 		printf("Failed to set counter bias. Err: %d\n", ret);
@@ -268,8 +268,8 @@ int main(int argc, char **argv) {
 	ret = 0;
 
 exit:
-	printf("Exiting in 15 seconds...");
-	sleep(15);
+	printf("Exiting in 5 seconds...");
+	sleep(5);
 	return ret;
 }
 
@@ -280,9 +280,7 @@ int ntp_get_time(uint32_t* gctime, uint64_t* ticks) {
 	struct hostent *server;
 
 	memset(&packet, 0, sizeof(ntp_packet));
-	packet.li = 0;
-	packet.vn = 3;
-	packet.mode = 3; // client
+	packet.header = NTP_PACKET_HEADER(0, 3, 3 /* client */);
 
 	// Cannot use IPPROTO_UDP, this will return error 121
 	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -340,7 +338,7 @@ int ntp_get_time(uint32_t* gctime, uint64_t* ticks) {
 
 	*ticks = gettime();
 	/* Swap seconds to host byte order */
-	*gctime = ntohl(packet.txTm_s) - NTP_TO_GC_EPOCH_DELTA;
+	*gctime = ntohl(packet.txTm.seconds) - NTP_TO_GC_EPOCH_DELTA;
 
 	n = net_close(sockfd);
 	sockfd = -1;

@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
 	for (int i = 1; i <= NO_RETRIES; i++) {
 		get_buttons();
 
-		printf("\r\e[2K" /* clear line */ "Try: % 2d of configuring network. Hold home key to abort", i);
+		printf("\r\e[2K" /* clear line */ "Try: %d of configuring network. Hold home key to abort", i);
 		fflush(stdout);
 
 		net_deinit();
@@ -184,13 +184,11 @@ int main(int argc, char **argv) {
 
 	ret = KD_Init();
 	if (ret == 0) {
-		printf("Updating NWC24 Universal time\n");
-
 		time_t universal_time = utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
 		KD_RefreshRTCCounter(true);
 		ret = KD_SetUniversalTime(universal_time, true);
 		if (ret < 0) {
-			printf("KD_SetUniversalTime ret=%i\n", ret);
+			printf("Failed to update NWC24 universal time (%i)\n", ret);
 		}
 
 		KD_Close();
@@ -249,8 +247,8 @@ int main(int argc, char **argv) {
 	bias = (utc_time_in_gc_epoch + sntp_config.offset + diff_sec(start_time, gettime())) - rtc_s;
 
 	printf("\nWriting new time (bias) to sysconf\n");
-	// to libogc: When do we get sysconf setter functions
 
+	// to libogc: When do we get sysconf setter functions
 	ret = CONF_Set("IPL.CB", &bias, sizeof(s32));
 	if (ret < 0) {
 		printf("Failed to set counter bias. Err: %d\n", ret);

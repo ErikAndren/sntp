@@ -1,55 +1,127 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h> // LONG_MIN and LONG_MAX, for strtol
 #include <string.h>
 #include <malloc.h>
 #include <network.h>
 #include <errno.h>
 #include <fat.h>
+#include <ogc/conf.h>
 
 #include <wiiuse/wpad.h>
-#include <ogc/lwp_queue.h>
+#include <ogc/lwp_watchdog.h>
 
 #include "ntp.h"
-#include "sysconf.h"
+#include "kdtime.h"
+// #include "sysconf.h"
 #include "http.h"
 #include "trace.h"
 
+extern s32 CONF_Set(const char *name, const void *buffer, u32 length);
+extern s32 CONF_SaveChanges(void);
 extern u32 __SYS_GetRTC(u32 *gctime);
 
-void *initialise();
-void *ntp_client(void *arg);
+void initialise();
+int ntp_get_time(uint32_t* gctime, uint64_t* ticks);
 void get_tz_offset();
 
 static void *xfb = NULL;
 GXRModeObj *rmode = NULL;
-static s32 gmt_offset = 0;
-static bool autosave = false;
 
-static lwp_t ntp_handle = (lwp_t) NULL;
+static struct sntp_config sntp_config;
 
-#define MAX_QUEUE_ITEMS 4
-static lwp_queue queue;
+u32 get_buttons(void) {
+	u32 buttonsDown = 0, buttonsDownGC = 0;
 
-typedef struct _queue_item {
-	lwp_node node;
-	u32 buttonsDown;
-} queue_item;
+	WPAD_ScanPads();
+	PAD_ScanPads();
+	buttonsDown = WPAD_ButtonsDown(0);
+	buttonsDownGC = PAD_ButtonsDown(0);
 
-static __inline__ lwp_node* __lwp_queue_head(lwp_queue *queue)
-{
-	return (lwp_node*)queue;
+	if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START || SYS_ResetButtonDown()) {
+		printf("\nHome button pressed. Exiting...\n");
+		exit(0);
+	}
+	if (buttonsDownGC & PAD_BUTTON_LEFT) {
+		buttonsDown |= WPAD_BUTTON_LEFT;
+	}
+	if (buttonsDownGC & PAD_BUTTON_RIGHT) {
+		buttonsDown |= WPAD_BUTTON_RIGHT;
+	}
+	if (buttonsDownGC & PAD_BUTTON_A) {
+		buttonsDown |= WPAD_BUTTON_A;
+	}
+
+	return buttonsDown;
 }
 
-static __inline__ lwp_node* __lwp_queue_tail(lwp_queue *queue)
-{
-	return (lwp_node*)&queue->perm_null;
+static const char* time_string(time_t time) {
+	struct tm _tm;
+	static char time_str[80];
+
+	strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", localtime_r(&time, &_tm));
+	return time_str;
 }
 
-static __inline__ void __lwp_queue_init_empty(lwp_queue *queue)
-{
-	queue->first = __lwp_queue_tail(queue);
-	queue->perm_null = NULL;
-	queue->last = __lwp_queue_head(queue);
+void sntp_parse_config(void) {
+	FILE* ntpf = NULL;
+	char linebuffer[100];
+
+	chdir(NTP_HOME);
+	ntpf = fopen(NTP_FILE, "r");
+	if (ntpf == NULL)
+		return;
+
+	while (fgets(linebuffer, sizeof(linebuffer), ntpf)) {
+		linebuffer[strcspn(linebuffer, "\r\n")] = '\0'; // remove the newline at the end
+
+		if (linebuffer[0] == '#')
+			continue;
+
+		char* valueptr = strchr(linebuffer, '=');
+		if (valueptr)
+			valueptr += 1;
+
+		/* strlen(<string constant>) is automatically optmized :) */
+		if (strncasecmp(linebuffer, "offset", strlen("offset")) == 0) {
+			if (!valueptr)
+				continue;
+
+			char* endptr;
+			long offset = strtol(valueptr, &endptr, 10);
+			if (offset == LONG_MIN || offset == LONG_MAX || *endptr != '\0') {
+				printf("Invalid 'offset' value %s\n", valueptr);
+				continue;
+			}
+
+			printf("Using UTC offset %+ld\n", offset);
+			sntp_config.specified_offset = true;
+			sntp_config.offset = offset;
+		}
+
+		else if (strncasecmp(linebuffer, "autosave", strlen("autosave")) == 0) {
+			printf("Autosave is enabled\n");
+			sntp_config.autosave = true;
+		}
+
+		else if (strncasecmp(linebuffer, "tzdb_url", strlen("tzdb_url")) == 0) {
+			if (!valueptr)
+				continue;
+
+			printf("Using timezone url: \n%s\n", valueptr);
+			strncpy(sntp_config.tzdb_url, valueptr, sizeof(sntp_config.tzdb_url) - 1);
+		}
+
+		else if (strncasecmp(linebuffer, "ntp_host", strlen("ntp_host")) == 0) {
+			if (!valueptr)
+				continue;
+
+			printf("Using NTP host: %s\n", valueptr);
+			strncpy(sntp_config.ntp_host, valueptr, sizeof(sntp_config.ntp_host) - 1);
+		}
+	}
+
+	fclose(ntpf);
 }
 
 #define NO_RETRIES 20
@@ -58,33 +130,28 @@ int main(int argc, char **argv) {
 	s32 ret;
 	struct in_addr hostip;
 
-	xfb = initialise();
+	uint32_t rtc_s;
+	time_t local_time;
+	uint32_t utc_time_in_gc_epoch;
+	uint64_t start_time = 0;
+	s32 bias;
 
-	__lwp_queue_init_empty(&queue);
+	initialise();
 
 	printf ("\nNTP time synchronizer\n");
 
-	ret = SYSCONF_Init();
+	ret = CONF_Init();
 	if (ret < 0) {
 		printf("Failed to init sysconf and settings.txt. Err: %d\n", ret);
-		exit(1);
+		goto exit;
 	}
-	get_tz_offset();
+
+	sntp_parse_config();
 
 	for (int i = 1; i <= NO_RETRIES; i++) {
-		WPAD_ScanPads();
+		get_buttons();
 
-	    u32 buttonsDown = WPAD_ButtonsDown(0);
-
-		PAD_ScanPads();
-		u32 buttonsDownGC = PAD_ButtonsDown(0);
-
-		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
-			printf("\nHome button pressed. Exiting...\n");
-			exit(0);
-		}
-
-		printf("\rTry: % 2d of configuring network. Hold home key to abort", i);
+		printf("\r\e[2K" /* clear line */ "Try: %d of configuring network. Hold home key to abort", i);
 		fflush(stdout);
 
 		net_deinit();
@@ -99,321 +166,237 @@ int main(int argc, char **argv) {
 	printf("\n");
 
 	if (ret < 0) {
-		printf ("Network configuration failed: %d:%s. Aborting!\n", ret, strerror(ret));
-		exit(0);
+		printf ("Network configuration failed: \n %s (%d)\n", strerror(-ret), ret);
+		goto exit;
 	}
 
 	hostip.s_addr = net_gethostip();
 	if (hostip.s_addr == 0) {
-		printf("Failed to get configured ip address. Aborting!\n");
-		exit(0);
+		printf("Failed to get local ip address.\n");
+		goto exit;
 	}
 
 	printf("Network configured, local ip: %s\n", inet_ntoa(hostip));
 
-	if (LWP_CreateThread(&ntp_handle,	/* thread handle */
-					 ntp_client,	/* code */
-					 NULL,		    /* arg pointer for thread */
-					 NULL,			/* stack base */
-					 16*1024,		/* stack size */
-					 50				/* thread priority */ ) < 0) {
-		printf("Failed to create ntp clint thread. Aborting!\n");
-		exit(0);
+	ret = ntp_get_time(&utc_time_in_gc_epoch, &start_time);
+	if (ret < 0)
+		goto exit;
+
+	ret = KD_Init();
+	if (ret == 0) {
+		time_t universal_time = utc_time_in_gc_epoch + diff_sec(start_time, gettime()) + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
+		KD_RefreshRTCCounter(true);
+		ret = KD_SetUniversalTime(universal_time, true);
+		if (ret < 0) {
+			printf("Failed to update NWC24 universal time (%i)\n", ret);
+		}
+
+		KD_Close();
 	}
 
-	uint32_t buttonsDown;
-	u32 buttonsDownGC;
-	while (true) {
-		VIDEO_WaitVSync();
-		WPAD_ScanPads();
+	get_tz_offset();
+	if (!sntp_config.autosave) {
+		printf("Use left and right button to adjust time zone\nPress A to write time to system config\n");
 
-		buttonsDown = WPAD_ButtonsDown(0);
-		PAD_ScanPads();
-		buttonsDownGC = PAD_ButtonsDown(0);
+		int offset = sntp_config.offset;
 
-		if (buttonsDown & WPAD_BUTTON_HOME || buttonsDownGC & PAD_BUTTON_START) {
-			printf("\nHome button pressed. Exiting...\n");
-			exit(0);
-		}
-		if (buttonsDownGC & PAD_BUTTON_LEFT) {
-			buttonsDown |= WPAD_BUTTON_LEFT;
-		}
-		if (buttonsDownGC & PAD_BUTTON_RIGHT) {
-			buttonsDown |= WPAD_BUTTON_RIGHT;
-		}
-		if (buttonsDownGC & PAD_BUTTON_A) {
-			buttonsDown |= WPAD_BUTTON_A;
-		}
+		uint64_t update_time = 0;
+		bool loop = true;
+		while (loop) {
+			uint64_t now = gettime();
+			if (diff_sec(update_time, now) >= 1) {
+				update_time = now;
+				local_time = utc_time_in_gc_epoch + UNIX_EPOCH_TO_GC_EPOCH_DELTA + offset + diff_sec(start_time, now);
 
-		if (buttonsDown != 0) {
-			queue_item *q = malloc(sizeof(queue_item));
-			if (q == NULL) {
-				printf("Failed to allocate queue item! Err:%d, %s\n", errno, strerror(errno));
-				continue;
+				int timezone = abs(offset / 3600);
+				int timezone_min = abs(offset % 3600 / 60);
+
+				// The difference is now +-1800, so if offset is -1800, timezone is 0, and that makes a +
+				printf("\r\e[2K" "Proposed NTP system time: %s (Timezone: %c%02d:%02d)", time_string(local_time), offset < 0 ? '-' : '+', timezone, timezone_min);
+				fflush(stdout);
 			}
-			q->buttonsDown = buttonsDown;
 
-			__lwp_queue_append(&queue, (lwp_node *) q);
+			for (int i = 0; i < 4; i++)
+				VIDEO_WaitVSync();
+
+			u32 buttons = get_buttons();
+
+			if (buttons & WPAD_BUTTON_LEFT) {
+				offset -= 1800;
+				update_time = 0;
+
+			} else if (buttons & WPAD_BUTTON_RIGHT) {
+				offset += 1800;
+				update_time = 0;
+
+			} else if (buttons & WPAD_BUTTON_A) {
+				loop = false;
+			}
 		}
+
+		sntp_config.offset = offset;
+	}
+
+	ret = __SYS_GetRTC(&rtc_s);
+	if (ret == 0) {
+		printf("Failed to get RTC.\n");
+		goto exit;
+	}
+
+	// Calculate new bias
+	bias = (utc_time_in_gc_epoch + sntp_config.offset + diff_sec(start_time, gettime())) - rtc_s;
+
+	printf("\nWriting new time (bias) to sysconf\n");
+
+	// to libogc: When do we get sysconf setter functions
+	ret = CONF_Set("IPL.CB", &bias, sizeof(s32));
+	if (ret < 0) {
+		printf("Failed to set counter bias. Err: %d\n", ret);
+		goto exit;
+	}
+
+	ret = CONF_SaveChanges();
+	if (ret != 0) {
+		printf("Failed to save updated counter bias. Err: %d\n", ret);
+		goto exit;
+	}
+
+	printf("Successfully saved counter bias change\n");
+
+	__SYS_GetRTC(&rtc_s);
+	local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
+	printf("Time successfully updated to: %s\n", time_string(local_time));
+	ret = 0;
+
+exit:
+	printf("Exiting in 5 seconds...");
+	sleep(5);
+	return ret;
+}
+
+int ntp_get_time(uint32_t* gctime, uint64_t* ticks) {
+	int sockfd, n;
+	ntp_packet packet;
+	struct sockaddr_in serv_addr;
+	struct hostent *server;
+
+	memset(&packet, 0, sizeof(ntp_packet));
+	packet.header = NTP_PACKET_HEADER(0, 3, 3 /* client */);
+
+	// Cannot use IPPROTO_UDP, this will return error 121
+	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+	if (sockfd < 0) {
+		printf("Failed to create socket: \n%s (%d)\n", strerror(-sockfd), sockfd);
+		return sockfd;
+	}
+
+	const char* ntp_host = sntp_config.ntp_host;
+	if (*ntp_host == '\0')
+		ntp_host = NTP_HOST;
+
+	server = net_gethostbyname(ntp_host);
+	if (server == NULL) {
+		int _errno = errno;
+		printf("Failed to resolve %s: \n%s (%d)\n", ntp_host, strerror(-_errno), _errno);
+		return _errno;
+	}
+
+	memset(&serv_addr, 0, sizeof(serv_addr));
+
+	serv_addr.sin_family = AF_INET;
+	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+	serv_addr.sin_port = htons(NTP_PORT);
+
+	printf("Resolved NTP server %s to %s\n\n", ntp_host, inet_ntoa(serv_addr.sin_addr));
+
+	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
+	if (n < 0) {
+		printf("Failed to establish connection to NTP server: \n%s (%d)\n", strerror(-n), n);
+		return n;
+	}
+
+	n = net_write(sockfd, &packet, sizeof(ntp_packet));
+	if (n != sizeof(ntp_packet)) {
+		if (n < 0) {
+			printf("Error while sending NTP packet: \n%s (%d)\n", strerror(-n), n);
+			return n;
+		} else {
+			printf("Failed to send full NTP packet (sent %u bytes, expected %u)\n", n, sizeof(ntp_packet));
+			return -1;
+		}
+	}
+
+	n = net_read(sockfd, &packet, sizeof(ntp_packet));
+	if (n != sizeof(ntp_packet)) {
+		if (n < 0) {
+			printf("Error while recieving NTP packet: \n%s (%d)\n", strerror(-n), n);
+			return n;
+		} else {
+			printf("Did not recieve full NTP packet (sent %u bytes, expected %u)\n", n, sizeof(ntp_packet));
+			return -1;
+		}
+	}
+
+	*ticks = gettime();
+	/* Swap seconds to host byte order */
+	*gctime = ntohl(packet.txTm.seconds) - NTP_TO_GC_EPOCH_DELTA;
+
+	n = net_close(sockfd);
+	sockfd = -1;
+	if (n < 0) {
+		printf("Failed to close NTP connection: \n%s (%d)\n", strerror(-n), n);
+		return n;
 	}
 
 	return 0;
 }
 
-void *ntp_client(void *arg) {
-	int sockfd, n;
-	ntp_packet packet;
-	struct sockaddr_in serv_addr;
-	struct hostent *server;
-	uint32_t rtc_s;
-	uint64_t local_time;
-	uint64_t ntp_time_in_gc_epoch;
-	u32 bias, chk_bias;
-	s32 timezone, timezone_min;
-	char ntp_host[80], timezone_min_str[80];
-	FILE *ntpf;
-
-	// allow overriding default ntp server
-	strcpy(ntp_host, NTP_HOST);
-	chdir(NTP_HOME);
-	ntpf = fopen(NTP_FILE, "r");
-	if(ntpf != NULL) {
-		fgets(ntp_host, sizeof(ntp_host), ntpf);
-		fclose(ntpf);
-		printf("Using NTP server %s from file %s\n", ntp_host, NTP_FILE);
-	}
-
-	memset(&packet, 0, sizeof(ntp_packet));
-
-	// Set the first byte's bits to 00,011,011 for li = 0, vn = 3, and mode = 3
-	*((char *) &packet + 0) = 0b00011011;
-
-	// Cannot use IPPROTO_UDP, this will return error 121
-	sockfd = net_socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-
-	if (sockfd < 0) {
-		printf("Failed to create socket %d:%s. Aborting!\n", sockfd, strerror(sockfd));
-		return NULL;
-	}
-
-	server = net_gethostbyname(ntp_host);
-	if (server == NULL) {
-		printf("Failed to resolve ntp host %s. Errno: %d, %s. Aborting!\n", ntp_host, errno, strerror(errno));
-		return NULL;
-	}
-
-	memset(&serv_addr, 0, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-
-	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-
-	printf("Resolved NTP server %s to %s\n\n", ntp_host, inet_ntoa(serv_addr.sin_addr));
-
-	serv_addr.sin_port = htons(NTP_PORT);
-
-	n = net_connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
-	if (n < 0) {
-		printf("Failed to establish connection to NTP server. Err: %d:%s, Aborting!\n", n, strerror(n));
-		return NULL;
-	}
-
-	n = net_write(sockfd, &packet, sizeof(ntp_packet));
-	if (n != sizeof(ntp_packet)) {
-		printf("Failed to write the full ntp packet. Err: %d:%s. Aborting!\n", n, strerror(n));
-		return NULL;
-	}
-
-	n = net_read(sockfd, &packet, sizeof(ntp_packet));
-	if (n < sizeof(ntp_packet)) {
-		if (n < 0) {
-			printf("Error while receiving ntp packet. Err: %d:%s. Aborting!\n", n, strerror(n));
-		} else {
-			printf("Did not receive full ntp packet. Got %d bytes. Aborting!\n", n);
-		}
-		return NULL;
-	}
-
-	/* Swap seconds to host byte order */
-	packet.txTm_s = ntohl(packet.txTm_s);
-
-	n = __SYS_GetRTC(&rtc_s);
-	if (n == 0) {
-		printf("Failed to get RTC. Err: %d. Aborting!\n", n);
-		return NULL;
-	}
-
-	ntp_time_in_gc_epoch = packet.txTm_s - NTP_TO_GC_EPOCH_DELTA;
-
-	n = SYSCONF_GetCounterBias(&bias);
-	if (n < 0) {
-		printf("%s:%d. Failed to get counter bias. Err: %d. Aborting!\n", __FILE__, __LINE__, n);
-		return NULL;
-	}
-
-	local_time = rtc_s + bias;
-
-	printf("Use left and right button to adjust time zone\nPress A to write time to system config\n");
-
-	timezone = gmt_offset / 3600;
-	timezone_min = abs(gmt_offset % 3600 / 60);
-
-	// Calculate new bias
-	bias = ntp_time_in_gc_epoch - rtc_s + gmt_offset;
-
-	uint32_t old_rtc_s = 0;
-	char time_str[80];
-	struct tm *p;
-
-	while (true) {
-		queue_item *q = (queue_item *) __lwp_queue_get(&queue);
-
-		n = __SYS_GetRTC(&rtc_s);
-		if (n == 0) {
-			printf("Failed to get RTC. Err: %d. Aborting!\n", n);
-			return NULL;
-		}
-
-		if (old_rtc_s != rtc_s) {
-			old_rtc_s = rtc_s;
-			local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
-
-			p = localtime((time_t *) &local_time);
-			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
-
-			if(timezone_min != 0)
-			{
-				snprintf(timezone_min_str, sizeof(timezone_min_str),":%d",timezone_min);
-			}
-			else
-			{
-				strcpy(timezone_min_str, "");
-			}
-			printf("\rProposed NTP system time: %s (Timezone: %+03d%s)   ", time_str, timezone, timezone_min_str);
-			fflush(stdout);
-		}
-
-		if (q == NULL && !autosave) {
-			LWP_YieldThread();
-			continue;
-		}
-
-		if (q && q->buttonsDown & WPAD_BUTTON_LEFT) {
-			timezone--;
-			bias -= 3600;
-
-		} else if (q && q->buttonsDown & WPAD_BUTTON_RIGHT) {
-			timezone++;
-			bias += 3600;
-
-		} else if (autosave || q->buttonsDown & WPAD_BUTTON_A) {
-			printf("\nWriting new time (bias) to sysconf\n");
-			n = SYSCONF_SetCounterBias(bias);
-			if (n < 0) {
-				printf("Failed to set counter bias. Err: %d. Aborting!\n", n);
-				return NULL;
-			}
-
-			n = SYSCONF_SaveChanges();
-			if (n != 0) {
-				printf("Failed to save updated counter bias. Err: %d\n", n);
-			}
-			printf("Successfully saved counter bias change\n");
-
-			printf("Checking time written (counter bias) value\n");
-			chk_bias = 0;
-			n = SYSCONF_GetCounterBias(&chk_bias);
-			if (n < 0) {
-				printf("Failed to get counter bias. Err: %d. Aborting!\n", n);
-				return NULL;
-			}
-
-			if (bias != chk_bias) {
-				printf("Failed to verify written bias value. Got %u, expected %u\n", chk_bias, bias);
-				return NULL;
-			}
-
-			local_time = rtc_s + bias + UNIX_EPOCH_TO_GC_EPOCH_DELTA;
-			p = localtime((time_t *) &local_time);
-			strftime(time_str, sizeof(time_str), "%H:%M:%S %B %d %Y", p);
-
-			printf("Time successfully updated to: %s\n", time_str);
-			if(autosave)
-			{
-				printf("Auto save is On and completed so exiting...\n");
-				exit(0);
-			}
-			printf("You may now terminate this program by pressing the home key\n(or continue to adjust the time zones)\n");
-		}
-		free(q);
-	}
-
-	return NULL;
-}
-
 //---------------------------------------------------------------------------------
-void *initialise() {
+void initialise() {
 //---------------------------------------------------------------------------------
-
-	void *framebuffer;
 
 	VIDEO_Init();
-	fatInitDefault();
 	PAD_Init();
+	WPAD_Init();
+	fatInitDefault();
+	/*
 	if (WPAD_Init() != WPAD_ERR_NONE) {
-		printf("Failed to initialize any wii motes\n");
+		printf("Failed to initialize any wii motes\n"); // can't show up. console is not initialized yet
 	}
+	*/
 
 	rmode = VIDEO_GetPreferredMode(NULL);
-	framebuffer = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
-	console_init(framebuffer,20,20,rmode->fbWidth,rmode->xfbHeight,rmode->fbWidth*VI_DISPLAY_PIX_SZ);
+	xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+	console_init(xfb,20,20,rmode->fbWidth,rmode->xfbHeight,rmode->fbWidth*VI_DISPLAY_PIX_SZ);
 
 	VIDEO_Configure(rmode);
-	VIDEO_SetNextFramebuffer(framebuffer);
+	VIDEO_SetNextFramebuffer(xfb);
+	VIDEO_ClearFrameBuffer(rmode, xfb, COLOR_BLACK);
 	VIDEO_SetBlack(FALSE);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
 	if(rmode->viTVMode&VI_NON_INTERLACE) {
 		VIDEO_WaitVSync();
 	}
-
-	return framebuffer;
 }
+
 //---------------------------------------------------------------------------------
 void get_tz_offset() {
 //---------------------------------------------------------------------------------
 
 	char *s_fn="get_tz_offset" ;
-	FILE *tzdbf;
 	char userData1[MAX_LEN];
 	char userData2[MAX_LEN];
-	char tzurl[MAX_LEN];
-	char autosavebuf[MAX_LEN] = "manualsave";
 
-	// if config file exists, try to get timezone offset online
-	chdir(NTP_HOME);
-	tzdbf = fopen(NTP_TZDB, "r");
-	if(tzdbf == NULL)
+	if (*sntp_config.tzdb_url == '\0')
 		return;
-
-	printf("Using timezone URL from file %s\n", NTP_TZDB);
 
 	// Open trace module
 	traceOpen(TRACE_FILENAME);
 	traceEvent(s_fn, 0,"%s %s Started", PROGRAM_NAME, PROGRAM_VERSION);
 
-	fgets(tzurl, sizeof(tzurl), tzdbf);
-	fgets(autosavebuf, sizeof(autosavebuf), tzdbf);
-	fclose(tzdbf);
-	tzurl[strcspn(tzurl, "\r\n")] = 0;
-
-	if(strstr(autosavebuf,"autosave") != NULL)
-	{
-		autosave = true;
-	}
-	printf("Auto save is %s\n", autosave ? "On" : "Off");
-
 	tcp_start_thread(PROGRAM_NAME, PROGRAM_VERSION,
-						"", tzurl,
+						"", sntp_config.tzdb_url,
 						"", "",
 						"", "",
 						"", "",
@@ -427,13 +410,13 @@ void get_tz_offset() {
 	}
 	if(tcp_state == TCP_IDLE)
 	{
-		gmt_offset = atoi(tcp_get_version());
-		printf("Found GMT offset online of %d\n", gmt_offset);
+		sntp_config.offset = atoi(tcp_get_version());
+		printf("Found GMT offset online of %d\n", sntp_config.offset);
 	}
 	else
 	{
 		printf("GMT offset not found online\n");
-		autosave = false;
+		sntp_config.autosave &= sntp_config.specified_offset;
 	}
 	tcp_stop_thread();
 

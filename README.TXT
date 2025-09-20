@@ -4,17 +4,27 @@ There are two options on how to use this utility:
 1. Manual adjustment using the wii mote or gamecube controller.
 Timezones are not remembered and will have to be adjusted manually by the user.
 
-2. Configuration using a timezone configuration file:
-Create a tzdb.cfg in the same directory as the sntp application on the SD card.
+2. Configuration using a static offset:
+Create an sntp.cfg in the same directory as the sntp application on the SD card.
 
 Populate it with the following lines:
 
-http://api.timezonedb.com/v2.1/get-time-zone?key=MY_API_KEY&format=json&by=zone&zone=America/Toronto&fields=gmtOffset
-autosave
+offset=OFFSET_SECONDS
+autosave=1
+
+Replace OFFSET_SECONDS with your UTC/GMT offset in seconds.
+e.g. if your UTC offset is -4:30, OFFSET_SECONDS is -16200
+
+3. Configuration using a timezone configuration file:
+Create an sntp.cfg in the same directory as the sntp application on the SD card.
+
+Populate it with the following lines:
+
+tzdb_url=http://api.timezonedb.com/v2.1/get-time-zone?key=MY_API_KEY&format=json&by=zone&zone=MY_TIME_ZONE&fields=gmtOffset
+autosave=1
 
 Register an account at timezonedb.com
 Change the MY_API_KEY to the api key you will receive.
-
 Change the timezone from the list available at: https://timezonedb.com/time-zones
 
 If you want the utility to exit automatically after adjustment keep the autosave, otherwise remove.

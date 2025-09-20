@@ -1,0 +1,20 @@
+## SNTP config file template
+## Lines starting with # are ignored by SNTP. Remove the # for settings you would like to use.
+
+## ntp_host: Hostname of NTP server to use.
+
+#ntp_host=pool.ntp.org
+
+## offset: Offset (in seconds) from UTC time.
+## e.g. for EST (-05:00). offset would be -18000 (-5 * 3600)
+
+#offset=0
+
+## autosave: Automatically save the time with the specified offset.
+
+#autosave=1
+
+## tzdb_url: URL to the TimeZoneDB API for automatically fetching the UTC offset.
+## If this is specified (and it actually succeeds), `offset` will be disregarded.
+
+#tzdb_url=http://api.timezonedb.com/v2.1/get-time-zone?key=MY_API_KEY&format=json&by=zone&zone=America/Toronto&fields=gmtOffset

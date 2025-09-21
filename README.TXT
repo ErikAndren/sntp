@@ -1,6 +1,6 @@
 This is a small utility developed for the Nintendo Wii which will synchronize the system time to the NTP time.
 
-There are two options on how to use this utility:
+There are three options on how to use this utility:
 1. Manual adjustment using the wii mote or gamecube controller.
 Timezones are not remembered and will have to be adjusted manually by the user.
 

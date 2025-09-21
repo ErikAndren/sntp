@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
 
 	initialise();
 
-	printf ("\nNTP time synchronizer\n");
+	printf ("\nNTP time synchronizer %s %s\n", PROGRAM_NAME, PROGRAM_VERSION);
 
 	ret = CONF_Init();
 	if (ret < 0) {

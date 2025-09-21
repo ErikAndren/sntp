@@ -21,7 +21,7 @@ SOURCES		:=	source
 DATA		:=	data  
 INCLUDES	:=
 
-RELEASE_VERSION :=	"v1.2.0"
+RELEASE_VERSION :=	"v1.3.0"
 
 #---------------------------------------------------------------------------------
 # options for code generation

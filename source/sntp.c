@@ -65,7 +65,7 @@ static const char* time_string(time_t time) {
 
 void sntp_parse_config(void) {
 	FILE* ntpf = NULL;
-	char linebuffer[100];
+	char linebuffer[MAX_LEN];
 
 	chdir(NTP_HOME);
 	ntpf = fopen(NTP_FILE, "r");
@@ -108,7 +108,7 @@ void sntp_parse_config(void) {
 			if (!valueptr)
 				continue;
 
-			printf("Using timezone url: \n%s\n", valueptr);
+			printf("Using tzdb_url from file %s\n", NTP_FILE);
 			strncpy(sntp_config.tzdb_url, valueptr, sizeof(sntp_config.tzdb_url) - 1);
 		}
 
